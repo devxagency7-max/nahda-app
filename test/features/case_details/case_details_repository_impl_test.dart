@@ -1,0 +1,93 @@
+import 'package:drift/native.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:nahda/core/network/api_client.dart';
+import 'package:nahda/core/storage/app_database.dart';
+import 'package:nahda/core/storage/secure_token_store.dart';
+import 'package:nahda/core/sync/sync_operation.dart';
+import 'package:nahda/core/sync/sync_queue.dart';
+import 'package:nahda/features/case_details/data/case_details_repository_impl.dart';
+import 'package:nahda/features/case_details/data/mappers/family_members_mapper.dart';
+import 'package:nahda/features/case_details/data/mappers/housing_mapper.dart';
+import 'package:nahda/features/case_details/domain/sections/basic_info_family_form.dart';
+import 'package:nahda/features/case_details/domain/sections/housing_form.dart';
+import 'package:nahda/features/cases/data/cases_api.dart';
+import 'package:nahda/features/cases/data/cases_repository.dart';
+
+/// اختبارات ترطيب [CaseDetailsRepositoryImpl] من `CachedSections` — يتأكد
+/// أن قسمًا حُفظ محليًا سابقًا يُقرأ **حرفيًا** عند إعادة فتح الشاشة، بلا
+/// اعتماد على `MockCaseDetailsRepository` (§3 من خطة المرحلة ٣).
+void main() {
+  late AppDatabase db;
+  late CasesRepository casesRepo;
+  late CaseDetailsRepositoryImpl repo;
+
+  setUp(() {
+    db = AppDatabase.forTesting(NativeDatabase.memory());
+    casesRepo = CasesRepository(
+      api: CasesApi(
+        ApiClient.create(
+          tokenStore: SecureTokenStore(),
+          onSessionExpired: () async {},
+        ),
+      ),
+      db: db,
+      queue: SyncQueueDao(db),
+    );
+    repo = CaseDetailsRepositoryImpl(casesRepository: casesRepo);
+  });
+
+  tearDown(() => db.close());
+
+  test('حالة بلا أي قسم محفوظ محليًا ترجع بيانات Mock (fallback مؤقت)', () async {
+    final details = await repo.getCaseDetails('case_1024');
+    // case_1024 مبني بالكامل في الـ Mock — دليل أن الـ fallback ما زال يعمل.
+    expect(details.basicInfo.caseNumber, isNotEmpty);
+  });
+
+  test('أفراد الأسرة المحفوظون محليًا يُقرأون حرفيًا، لا من Mock', () async {
+    final form = FamilyMembersFormData(
+      members: [
+        FamilyMemberFormData(
+          name: 'فرد اختباري',
+          relation: 'ابن',
+          age: 10,
+          gender: 'ذكر',
+          isStudent: true,
+          educationStage: 'ابتدائي',
+        ),
+      ],
+    );
+
+    await casesRepo.saveSection(
+      caseId: 'case-unknown',
+      sectionKey: 'family_members',
+      dataJson: FamilyMembersMapper.toCacheJson(form),
+    );
+
+    final details = await repo.getCaseDetails('case-unknown');
+
+    expect(details.family.members, hasLength(1));
+    expect(details.family.members.single.name, 'فرد اختباري');
+    expect(details.family.members.single.relationship, 'ابن');
+    expect(details.family.familyMembersCount, 1);
+  });
+
+  test('السكن المحفوظ محليًا يُقرأ حرفيًا بعد enqueue', () async {
+    final form = HousingFormData(housingDescription: 'وصف اختباري');
+    form.walls.selected.add('طوب احمر');
+
+    await casesRepo.saveSection(
+      caseId: 'case-unknown',
+      sectionKey: 'housing',
+      dataJson: HousingMapper.toCacheJson(form),
+      apiPayload: HousingMapper.toApiPayload(form, rowVersion: null),
+      syncType: SyncOperationType.updateHousing,
+    );
+
+    final details = await repo.getCaseDetails('case-unknown');
+
+    expect(details.housing, isNotNull);
+    expect(details.housing!.description, 'وصف اختباري');
+    expect(details.housing!.wallsCondition, 'طوب احمر');
+  });
+}

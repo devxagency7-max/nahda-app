@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  استثناء HTTP مؤقّت، مقصور على عنوان الاختبار الحالي فقط.
+
+  السيرفر الحالي (187.77.70.246) يعمل بلا TLS، وقد أُخبِرنا أنه سيصبح
+  عنوان الإنتاج نفسه. هذا الملف يسمح للتطبيق بالوصول إليه أثناء التطوير
+  فقط — لا يُفعِّل HTTP لأي مضيف آخر (base-config يبقى مشفّرًا فقط).
+
+  ⚠️ يجب حذف هذا الملف بالكامل والرجوع لـ https:// فور توفير شهادة TLS
+  على الخادم — إبقاؤه في نسخة إنتاج حقيقية يعني نقل بيانات مستفيدين
+  حساسة (رقم قومي، دخل، حالة صحية) نصًّا صريحًا على الشبكة.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">187.77.70.246</domain>
+    </domain-config>
+
+    <!-- كل شيء آخر يبقى على القاعدة الافتراضية الآمنة (HTTPS فقط). -->
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>
