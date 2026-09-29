@@ -7,10 +7,10 @@ import '../domain/case_status.dart';
 
 /// يحوّل صفّ الكاش إلى نموذج العرض الذي تستهلكه الشاشات.
 ///
-/// **طبقة عزل مقصودة.** الشبكة تعرف عشر حالات، والواجهة تعرض سبعًا؛ حالتان
-/// منها (`visitScheduled` و `readyForReview`) **لا وجود لهما على الشبكة
-/// إطلاقًا** وتُشتقّان من بيانات أخرى. وضع هذا المنطق في مكان واحد يعني أن
-/// إضافة `returnInfo` من الباك إند لاحقًا (§7) لا تمسّ أي شاشة.
+/// **طبقة عزل مقصودة.** حالتان من حالات الواجهة (`visitScheduled` و
+/// `readyForReview`) **لا وجود لهما على الشبكة إطلاقًا** وتُشتقّان من بيانات
+/// أخرى. وضع هذا المنطق في مكان واحد يعني أن إضافة `returnInfo` من الباك إند
+/// لاحقًا (§7) لا تمسّ أي شاشة.
 class CaseStatusMapper {
   const CaseStatusMapper._();
 
@@ -59,13 +59,20 @@ class CaseStatusMapper {
         return CaseWorkStatus.inProgress;
 
       case CaseStatus.pendingReview:
-      case CaseStatus.pendingApproval:
-      case CaseStatus.approved:
-      case CaseStatus.rejected:
         return CaseWorkStatus.submittedForReview;
+      case CaseStatus.pendingApproval:
+        return CaseWorkStatus.pendingApproval;
+      case CaseStatus.approved:
+        return CaseWorkStatus.approved;
+      case CaseStatus.rejected:
+        return CaseWorkStatus.rejected;
+
+      case CaseStatus.pendingAssignment:
+        return CaseWorkStatus.pendingAssignment;
 
       case CaseStatus.draft:
-      case CaseStatus.pendingAssignment:
+        return CaseWorkStatus.draft;
+
       case CaseStatus.unknown:
         return CaseWorkStatus.assigned;
     }

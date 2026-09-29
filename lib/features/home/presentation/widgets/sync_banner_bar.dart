@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../sync/presentation/sync_status_screen.dart';
 import '../home_providers.dart';
 
 /// شريط حالة المزامنة أعلى الشاشة.
@@ -36,18 +37,30 @@ class _Bar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final offline = banner.isOffline;
+    final attentionOnly =
+        !offline && !banner.hasPendingWork && banner.hasAttention;
 
     // الأوفلاين حالة عادية للعمل الميداني لا خطأ — لونه محايد لا أحمر.
-    final background = offline ? AppColors.surfaceMuted : AppColors.primaryLight;
-    final foreground = offline ? AppColors.textSecondary : AppColors.primary;
+    final background = offline || attentionOnly
+        ? AppColors.surfaceMuted
+        : AppColors.primaryLight;
+    final foreground = attentionOnly
+        ? AppColors.danger
+        : offline
+        ? AppColors.textSecondary
+        : AppColors.primary;
 
-    return Container(
+    return GestureDetector(
+      onTap: () => SyncStatusScreen.open(context),
+      child: Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
       color: background,
       child: Row(
         children: [
-          if (offline)
+          if (attentionOnly)
+            Icon(Icons.error_outline, size: 16, color: foreground)
+          else if (offline)
             Icon(Icons.cloud_off_outlined, size: 16, color: foreground)
           else
             SizedBox(
@@ -70,6 +83,7 @@ class _Bar extends StatelessWidget {
             ),
           ),
         ],
+      ),
       ),
     );
   }

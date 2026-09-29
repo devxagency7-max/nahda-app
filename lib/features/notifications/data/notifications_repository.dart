@@ -1,7 +1,11 @@
 import 'package:drift/drift.dart';
 
+import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/network/network_status_service.dart';
+import '../../../core/network/retry_policy.dart';
 import '../../../core/storage/app_database.dart';
+import '../../../core/sync/sync_engine.dart';
 import '../../../core/sync/sync_operation.dart';
 import '../../../core/sync/sync_queue.dart';
 import 'notifications_api.dart';
@@ -18,13 +22,21 @@ class NotificationsRepository {
     required NotificationsApi api,
     required AppDatabase db,
     required SyncQueueDao queue,
+    required SyncEngine syncEngine,
+    NetworkStatusService? networkStatus,
   }) : _api = api,
        _db = db,
-       _queue = queue;
+       _queue = queue,
+       _syncEngine = syncEngine,
+       _networkStatus = networkStatus;
 
   final NotificationsApi _api;
   final AppDatabase _db;
   final SyncQueueDao _queue;
+  final SyncEngine _syncEngine;
+
+  /// `null` فقط في اختبارات لا تحتاج تمييز أونلاين/أوفلاين قبل `refresh()`.
+  final NetworkStatusService? _networkStatus;
 
   Stream<List<CachedNotificationRow>> watchAll() =>
       (_db.select(_db.cachedNotifications)
@@ -47,8 +59,14 @@ class NotificationsRepository {
   /// أبسط هنا: لا حاجة لتمييز نوع الفشل لأن الإشعارات ليست حرجة بنفس درجة
   /// طابور عمل الحالات).
   Future<bool> refresh({int limit = 50}) async {
+    if (_networkStatus?.current.isOnline == false) {
+      AppLogger.data('Strategy: LOCAL (notifications) — offline');
+      return false;
+    }
+
     try {
-      final response = await _api.list(limit: limit);
+      final response = await RetryPolicy.run(() => _api.list(limit: limit));
+      AppLogger.data('Strategy: REMOTE (notifications)');
       final page = response['page'] as Map<String, dynamic>? ?? const {};
       final items = (page['items'] as List? ?? const [])
           .whereType<Map<String, dynamic>>();
@@ -102,6 +120,18 @@ class NotificationsRepository {
     await (_db.update(_db.cachedNotifications)..where((t) => t.id.equals(id)))
         .write(const CachedNotificationsCompanion(isRead: Value(true)));
 
+    final result = await _syncEngine.trySendImmediately(
+      type: SyncOperationType.markNotificationRead,
+      caseId: id,
+      payload: const {},
+    );
+    if (result.isSent) return;
+    if (result.isRejected) {
+      await (_db.update(_db.cachedNotifications)..where((t) => t.id.equals(id)))
+          .write(const CachedNotificationsCompanion(isRead: Value(false)));
+      throw result.error!;
+    }
+
     await _queue.enqueue(
       type: SyncOperationType.markNotificationRead,
       caseId: id,
@@ -114,6 +144,14 @@ class NotificationsRepository {
     await _db
         .update(_db.cachedNotifications)
         .write(const CachedNotificationsCompanion(isRead: Value(true)));
+
+    final result = await _syncEngine.trySendImmediately(
+      type: SyncOperationType.markAllNotificationsRead,
+      caseId: _markAllReadGroupKey,
+      payload: const {},
+    );
+    if (result.isSent) return;
+    if (result.isRejected) throw result.error!;
 
     await _queue.enqueue(
       type: SyncOperationType.markAllNotificationsRead,

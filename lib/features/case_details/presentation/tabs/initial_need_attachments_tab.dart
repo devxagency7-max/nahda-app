@@ -61,7 +61,7 @@ class _InitialNeedAttachmentsTabState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('تعذّرت إضافة المرفق: $e'),
+          content: Text('معلش، مقدرناش نضيف المرفق: $e'),
           backgroundColor: AppColors.danger,
         ),
       );
@@ -84,7 +84,7 @@ class _InitialNeedAttachmentsTabState
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('تمت إضافة مرفق (${attachment.documentType}) بنجاح'),
+        content: Text('تمام! اتضاف مرفق (${attachment.documentType})'),
         backgroundColor: AppColors.success,
         duration: const Duration(seconds: 2),
       ),
@@ -108,7 +108,7 @@ class _InitialNeedAttachmentsTabState
 
     return attachmentsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, _) => const Center(child: Text('تعذّر تحميل المرفقات')),
+      error: (_, __) => const Center(child: Text('تعذّر تحميل المرفقات')),
       data: (attachments) {
         final totalCount = attachments.length;
         final progress = totalCount > 0 ? 1.0 : 0.0;
@@ -234,7 +234,7 @@ class _AttachmentTile extends StatelessWidget {
     final result = await OpenFilex.open(file.path);
     if (result.type != ResultType.done && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تعذر فتح الملف: ${result.message}')),
+        SnackBar(content: Text('معلش، مقدرناش نفتح الملف: ${result.message}')),
       );
     }
   }

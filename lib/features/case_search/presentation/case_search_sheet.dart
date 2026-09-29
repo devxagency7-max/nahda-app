@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/network/api_exception.dart';
+import '../../../core/providers/data_providers.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../case_details/presentation/case_details_screen.dart';
+import '../../cases/domain/case_status.dart';
 import '../../home/domain/case_priority.dart';
+import '../../home/presentation/home_providers.dart';
 import 'case_search_providers.dart';
 import 'widgets/case_search_result_tile.dart';
 
@@ -32,17 +36,23 @@ class _CaseSearchSheetState extends ConsumerState<CaseSearchSheet> {
   late final TextEditingController _controller;
   final _focusNode = FocusNode();
 
+  /// معرّف الحالة التي يجري تكليفها لنفس الأخصائي الآن — `null` يعني لا شيء
+  /// قيد التنفيذ. بطاقة واحدة فقط تُعطَّل في كل مرة.
+  String? _acceptingCaseId;
+
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.initialQuery ?? '');
     if (widget.initialQuery != null && widget.initialQuery!.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        ref.read(caseSearchQueryProvider.notifier).state = widget.initialQuery!;
+        if (mounted) {
+          ref.read(caseSearchQueryProvider.notifier).state = widget.initialQuery!;
+        }
       });
     } else {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _focusNode.requestFocus();
+        if (mounted) _focusNode.requestFocus();
       });
     }
   }
@@ -131,7 +141,7 @@ class _CaseSearchSheetState extends ConsumerState<CaseSearchSheet> {
 
     return resultsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, _) => const _SearchError(),
+      error: (_, __) => const _SearchError(),
       data: (results) {
         if (results.isEmpty) {
           return _NoResults(onCreateNew: () => _openNewCase(context));
@@ -142,11 +152,15 @@ class _CaseSearchSheetState extends ConsumerState<CaseSearchSheet> {
             vertical: AppSpacing.sm,
           ),
           itemCount: results.length,
-          separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.sm),
+          separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
           itemBuilder: (context, index) {
             final result = results[index];
             return CaseSearchResultTile(
               result: result,
+              onAccept: result.status == CaseStatus.pendingAssignment
+                  ? () => _acceptCaseFromSearch(result.id)
+                  : null,
+              isAccepting: _acceptingCaseId == result.id,
               onTap: () {
                 Navigator.of(context).pop();
                 Navigator.of(context).push(
@@ -165,6 +179,44 @@ class _CaseSearchSheetState extends ConsumerState<CaseSearchSheet> {
         );
       },
     );
+  }
+
+  /// تكليف حالة `pendingAssignment` لنفس الأخصائي مباشرة من نتائج البحث —
+  /// نفس منطق `CaseSearchScreen._acceptCaseFromSearch`. لا نُغلق الـ Sheet
+  /// بعد النجاح (خلاف `onTap`) — المستخدم قد يريد تكليف أكثر من حالة تباعًا
+  /// قبل مغادرة نتائج البحث.
+  Future<void> _acceptCaseFromSearch(String caseId) async {
+    if (_acceptingCaseId != null) return;
+    setState(() => _acceptingCaseId = caseId);
+    final messenger = ScaffoldMessenger.of(context);
+    final repo = ref.read(casesRepositoryProvider);
+    try {
+      await repo.refreshCaseDetails(caseId);
+      await repo.acceptAssignment(caseId);
+      if (!mounted) return;
+      ref.invalidate(caseSearchResultsProvider);
+      ref.invalidate(homeDataProvider);
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('تم تكليفك بالحالة')));
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              e.isConflict
+                  ? 'الحالة دي اتكلف بيها أخصائي تاني أو اتغيرت، هنحدّث البيانات'
+                  : e.displayMessage,
+            ),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      ref.invalidate(caseSearchResultsProvider);
+    } finally {
+      if (mounted) setState(() => _acceptingCaseId = null);
+    }
   }
 
   void _openNewCase(BuildContext context) {

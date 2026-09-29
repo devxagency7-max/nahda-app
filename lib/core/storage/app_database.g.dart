@@ -36,6 +36,15 @@ class $SyncQueueTable extends SyncQueue
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _userIdMeta = const VerificationMeta('userId');
+  @override
+  late final GeneratedColumn<String> userId = GeneratedColumn<String>(
+    'user_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _sequenceMeta = const VerificationMeta(
     'sequence',
   );
@@ -183,6 +192,7 @@ class $SyncQueueTable extends SyncQueue
     id,
     type,
     caseId,
+    userId,
     sequence,
     payload,
     idempotencyKey,
@@ -229,6 +239,12 @@ class $SyncQueueTable extends SyncQueue
       );
     } else if (isInserting) {
       context.missing(_caseIdMeta);
+    }
+    if (data.containsKey('user_id')) {
+      context.handle(
+        _userIdMeta,
+        userId.isAcceptableOrUnknown(data['user_id']!, _userIdMeta),
+      );
     }
     if (data.containsKey('sequence')) {
       context.handle(
@@ -349,6 +365,10 @@ class $SyncQueueTable extends SyncQueue
         DriftSqlType.string,
         data['${effectivePrefix}case_id'],
       )!,
+      userId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}user_id'],
+      ),
       sequence: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}sequence'],
@@ -423,6 +443,14 @@ class SyncOperationRow extends DataClass
   /// التفريغ مُجمَّع حسبها: تعارض في حالة **لا يوقف** مزامنة حالة أخرى.
   final String caseId;
 
+  /// معرّف المستخدم الذي أنشأ هذه العملية — `AuthUser.id` وقت `enqueue`.
+  ///
+  /// **`null` فقط للصفوف الموجودة قبل هذا العمود** (ترقية من الإصدار ١، راجع
+  /// `AppDatabase.migration`) — لا يُنشَأ أي صفّ جديد بدونه بعد اليوم. يمنع
+  /// `SyncEngine`/`background_sync.dart` من تنفيذ عملية حساب سابق بتوكن حساب
+  /// لاحق على نفس الجهاز (AUTH_SESSION_AUDIT.md، مشكلة #4 CRITICAL).
+  final String? userId;
+
   /// ترتيب الإنشاء داخل نفس الحالة — التفريغ يحترمه بصرامة.
   final int sequence;
 
@@ -464,6 +492,7 @@ class SyncOperationRow extends DataClass
     required this.id,
     required this.type,
     required this.caseId,
+    this.userId,
     required this.sequence,
     required this.payload,
     this.idempotencyKey,
@@ -484,6 +513,9 @@ class SyncOperationRow extends DataClass
     map['id'] = Variable<String>(id);
     map['type'] = Variable<String>(type);
     map['case_id'] = Variable<String>(caseId);
+    if (!nullToAbsent || userId != null) {
+      map['user_id'] = Variable<String>(userId);
+    }
     map['sequence'] = Variable<int>(sequence);
     map['payload'] = Variable<String>(payload);
     if (!nullToAbsent || idempotencyKey != null) {
@@ -519,6 +551,9 @@ class SyncOperationRow extends DataClass
       id: Value(id),
       type: Value(type),
       caseId: Value(caseId),
+      userId: userId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(userId),
       sequence: Value(sequence),
       payload: Value(payload),
       idempotencyKey: idempotencyKey == null && nullToAbsent
@@ -558,6 +593,7 @@ class SyncOperationRow extends DataClass
       id: serializer.fromJson<String>(json['id']),
       type: serializer.fromJson<String>(json['type']),
       caseId: serializer.fromJson<String>(json['caseId']),
+      userId: serializer.fromJson<String?>(json['userId']),
       sequence: serializer.fromJson<int>(json['sequence']),
       payload: serializer.fromJson<String>(json['payload']),
       idempotencyKey: serializer.fromJson<String?>(json['idempotencyKey']),
@@ -580,6 +616,7 @@ class SyncOperationRow extends DataClass
       'id': serializer.toJson<String>(id),
       'type': serializer.toJson<String>(type),
       'caseId': serializer.toJson<String>(caseId),
+      'userId': serializer.toJson<String?>(userId),
       'sequence': serializer.toJson<int>(sequence),
       'payload': serializer.toJson<String>(payload),
       'idempotencyKey': serializer.toJson<String?>(idempotencyKey),
@@ -600,6 +637,7 @@ class SyncOperationRow extends DataClass
     String? id,
     String? type,
     String? caseId,
+    Value<String?> userId = const Value.absent(),
     int? sequence,
     String? payload,
     Value<String?> idempotencyKey = const Value.absent(),
@@ -617,6 +655,7 @@ class SyncOperationRow extends DataClass
     id: id ?? this.id,
     type: type ?? this.type,
     caseId: caseId ?? this.caseId,
+    userId: userId.present ? userId.value : this.userId,
     sequence: sequence ?? this.sequence,
     payload: payload ?? this.payload,
     idempotencyKey: idempotencyKey.present
@@ -644,6 +683,7 @@ class SyncOperationRow extends DataClass
       id: data.id.present ? data.id.value : this.id,
       type: data.type.present ? data.type.value : this.type,
       caseId: data.caseId.present ? data.caseId.value : this.caseId,
+      userId: data.userId.present ? data.userId.value : this.userId,
       sequence: data.sequence.present ? data.sequence.value : this.sequence,
       payload: data.payload.present ? data.payload.value : this.payload,
       idempotencyKey: data.idempotencyKey.present
@@ -676,6 +716,7 @@ class SyncOperationRow extends DataClass
           ..write('id: $id, ')
           ..write('type: $type, ')
           ..write('caseId: $caseId, ')
+          ..write('userId: $userId, ')
           ..write('sequence: $sequence, ')
           ..write('payload: $payload, ')
           ..write('idempotencyKey: $idempotencyKey, ')
@@ -698,6 +739,7 @@ class SyncOperationRow extends DataClass
     id,
     type,
     caseId,
+    userId,
     sequence,
     payload,
     idempotencyKey,
@@ -719,6 +761,7 @@ class SyncOperationRow extends DataClass
           other.id == this.id &&
           other.type == this.type &&
           other.caseId == this.caseId &&
+          other.userId == this.userId &&
           other.sequence == this.sequence &&
           other.payload == this.payload &&
           other.idempotencyKey == this.idempotencyKey &&
@@ -738,6 +781,7 @@ class SyncQueueCompanion extends UpdateCompanion<SyncOperationRow> {
   final Value<String> id;
   final Value<String> type;
   final Value<String> caseId;
+  final Value<String?> userId;
   final Value<int> sequence;
   final Value<String> payload;
   final Value<String?> idempotencyKey;
@@ -756,6 +800,7 @@ class SyncQueueCompanion extends UpdateCompanion<SyncOperationRow> {
     this.id = const Value.absent(),
     this.type = const Value.absent(),
     this.caseId = const Value.absent(),
+    this.userId = const Value.absent(),
     this.sequence = const Value.absent(),
     this.payload = const Value.absent(),
     this.idempotencyKey = const Value.absent(),
@@ -775,6 +820,7 @@ class SyncQueueCompanion extends UpdateCompanion<SyncOperationRow> {
     required String id,
     required String type,
     required String caseId,
+    this.userId = const Value.absent(),
     required int sequence,
     required String payload,
     this.idempotencyKey = const Value.absent(),
@@ -800,6 +846,7 @@ class SyncQueueCompanion extends UpdateCompanion<SyncOperationRow> {
     Expression<String>? id,
     Expression<String>? type,
     Expression<String>? caseId,
+    Expression<String>? userId,
     Expression<int>? sequence,
     Expression<String>? payload,
     Expression<String>? idempotencyKey,
@@ -819,6 +866,7 @@ class SyncQueueCompanion extends UpdateCompanion<SyncOperationRow> {
       if (id != null) 'id': id,
       if (type != null) 'type': type,
       if (caseId != null) 'case_id': caseId,
+      if (userId != null) 'user_id': userId,
       if (sequence != null) 'sequence': sequence,
       if (payload != null) 'payload': payload,
       if (idempotencyKey != null) 'idempotency_key': idempotencyKey,
@@ -840,6 +888,7 @@ class SyncQueueCompanion extends UpdateCompanion<SyncOperationRow> {
     Value<String>? id,
     Value<String>? type,
     Value<String>? caseId,
+    Value<String?>? userId,
     Value<int>? sequence,
     Value<String>? payload,
     Value<String?>? idempotencyKey,
@@ -859,6 +908,7 @@ class SyncQueueCompanion extends UpdateCompanion<SyncOperationRow> {
       id: id ?? this.id,
       type: type ?? this.type,
       caseId: caseId ?? this.caseId,
+      userId: userId ?? this.userId,
       sequence: sequence ?? this.sequence,
       payload: payload ?? this.payload,
       idempotencyKey: idempotencyKey ?? this.idempotencyKey,
@@ -887,6 +937,9 @@ class SyncQueueCompanion extends UpdateCompanion<SyncOperationRow> {
     }
     if (caseId.present) {
       map['case_id'] = Variable<String>(caseId.value);
+    }
+    if (userId.present) {
+      map['user_id'] = Variable<String>(userId.value);
     }
     if (sequence.present) {
       map['sequence'] = Variable<int>(sequence.value);
@@ -939,6 +992,7 @@ class SyncQueueCompanion extends UpdateCompanion<SyncOperationRow> {
           ..write('id: $id, ')
           ..write('type: $type, ')
           ..write('caseId: $caseId, ')
+          ..write('userId: $userId, ')
           ..write('sequence: $sequence, ')
           ..write('payload: $payload, ')
           ..write('idempotencyKey: $idempotencyKey, ')
@@ -5739,6 +5793,7 @@ typedef $$SyncQueueTableCreateCompanionBuilder =
       required String id,
       required String type,
       required String caseId,
+      Value<String?> userId,
       required int sequence,
       required String payload,
       Value<String?> idempotencyKey,
@@ -5759,6 +5814,7 @@ typedef $$SyncQueueTableUpdateCompanionBuilder =
       Value<String> id,
       Value<String> type,
       Value<String> caseId,
+      Value<String?> userId,
       Value<int> sequence,
       Value<String> payload,
       Value<String?> idempotencyKey,
@@ -5796,6 +5852,11 @@ class $$SyncQueueTableFilterComposer
 
   ColumnFilters<String> get caseId => $composableBuilder(
     column: $table.caseId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get userId => $composableBuilder(
+    column: $table.userId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5889,6 +5950,11 @@ class $$SyncQueueTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get userId => $composableBuilder(
+    column: $table.userId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get sequence => $composableBuilder(
     column: $table.sequence,
     builder: (column) => ColumnOrderings(column),
@@ -5972,6 +6038,9 @@ class $$SyncQueueTableAnnotationComposer
 
   GeneratedColumn<String> get caseId =>
       $composableBuilder(column: $table.caseId, builder: (column) => column);
+
+  GeneratedColumn<String> get userId =>
+      $composableBuilder(column: $table.userId, builder: (column) => column);
 
   GeneratedColumn<int> get sequence =>
       $composableBuilder(column: $table.sequence, builder: (column) => column);
@@ -6057,6 +6126,7 @@ class $$SyncQueueTableTableManager
                 Value<String> id = const Value.absent(),
                 Value<String> type = const Value.absent(),
                 Value<String> caseId = const Value.absent(),
+                Value<String?> userId = const Value.absent(),
                 Value<int> sequence = const Value.absent(),
                 Value<String> payload = const Value.absent(),
                 Value<String?> idempotencyKey = const Value.absent(),
@@ -6075,6 +6145,7 @@ class $$SyncQueueTableTableManager
                 id: id,
                 type: type,
                 caseId: caseId,
+                userId: userId,
                 sequence: sequence,
                 payload: payload,
                 idempotencyKey: idempotencyKey,
@@ -6095,6 +6166,7 @@ class $$SyncQueueTableTableManager
                 required String id,
                 required String type,
                 required String caseId,
+                Value<String?> userId = const Value.absent(),
                 required int sequence,
                 required String payload,
                 Value<String?> idempotencyKey = const Value.absent(),
@@ -6113,6 +6185,7 @@ class $$SyncQueueTableTableManager
                 id: id,
                 type: type,
                 caseId: caseId,
+                userId: userId,
                 sequence: sequence,
                 payload: payload,
                 idempotencyKey: idempotencyKey,

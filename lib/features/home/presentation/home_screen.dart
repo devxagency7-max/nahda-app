@@ -5,7 +5,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/widgets/app_background.dart';
 import '../../../core/widgets/fade_slide_in.dart';
-import '../../case_creation/presentation/create_case_screen.dart';
+import '../../case_details/presentation/case_details_screen.dart';
 import '../../case_list/presentation/case_list_filter.dart';
 import '../../case_list/presentation/case_list_screen.dart';
 import '../../notifications/presentation/notifications_screen.dart';
@@ -39,14 +39,18 @@ class HomeScreen extends ConsumerWidget {
         ),
         // زرّ "حالة جديدة": أُعيد بعد أن مُنحت `social_worker` صلاحية
         // `create_case` (§7.1، `BACKEND_CHANGE_RESPONSE_3.md`، 2026-09-19).
+        // يفتح `CaseDetailsScreen` في وضع الإنشاء (`caseId: null`) — نفس
+        // شاشة تفاصيل الحالة بالضبط، لكن كل الأقسام تُجمَع محليًا وتُرسَل في
+        // طلب واحد فقط عند الضغط على "إنشاء الحالة" في آخر تاب (§20 + طلب
+        // 15، `BACKEND_CHANGE_REQUEST_7.md`).
         // **قيد معروف:** الحالة الناتجة تُنشأ `unassigned` — الإسناد التلقائي
-        // للمُنشئ لا يزال معلّقًا (`BACKEND_CHANGE_REQUEST_4.md`)؛
-        // `CreateCaseScreen` تعرض تنبيهًا صريحًا بهذا بعد نجاح الإنشاء.
+        // للمُنشئ لا يزال معلّقًا (`BACKEND_CHANGE_REQUEST_4.md`)؛ الشاشة
+        // تعرض تنبيهًا صريحًا بهذا بعد نجاح الإنشاء.
         data: (data) => Scaffold(
           backgroundColor: Colors.transparent,
           drawer: HomeDrawer(data: data),
           floatingActionButton: FloatingActionButton.extended(
-            onPressed: () => CreateCaseScreen.open(context),
+            onPressed: () => CaseDetailsScreen.openForCreate(context),
             icon: const Icon(Icons.add),
             label: const Text('حالة جديدة'),
           ),

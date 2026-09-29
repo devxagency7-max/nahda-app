@@ -1,40 +1,77 @@
+import 'dart:async';
 import 'dart:convert';
 
-
+import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_error_code.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/network/network_status_service.dart';
+import '../../../core/network/retry_policy.dart';
 import '../../../core/storage/app_database.dart';
 import '../domain/reference_models.dart';
 import 'reference_api.dart';
 
-/// مستودع البيانات المرجعية — يقرأ من الكاش، يحدّثه من الشبكة.
+/// مستودع البيانات المرجعية — Online-First: يقرأ من الخادم مباشرة عند توفّر
+/// الاتصال، ويقع على الكاش المحلي فقط عند الأوفلاين أو فشل الشبكة.
 ///
 /// **حرج للعمل أوفلاين**: القوائم المنسدلة والمراكز والقرى لا بد أن تكون
-/// مخزَّنة قبل خروج الأخصائي للميدان، وإلا تعذّر ملء أي نموذج.
+/// مخزَّنة قبل خروج الأخصائي للميدان، وإلا تعذّر ملء أي نموذج — لذا كل قراءة
+/// أونلاين ناجحة تُحدِّث الكاش في الخلفية حتى تبقى نسخة الأوفلاين طازجة.
 class ReferenceRepository {
-  ReferenceRepository({required ReferenceApi api, required AppDatabase db})
-    : _api = api,
-      _db = db;
+  ReferenceRepository({
+    required ReferenceApi api,
+    required AppDatabase db,
+    required NetworkStatusService networkStatus,
+  }) : _api = api,
+       _db = db,
+       _networkStatus = networkStatus;
 
   final ReferenceApi _api;
   final AppDatabase _db;
+  final NetworkStatusService _networkStatus;
 
   /// عمر الكاش قبل اعتباره قديمًا. البيانات المرجعية نادرة التغيّر.
   static const _staleAfter = Duration(hours: 24);
 
-  // ───────────────────────── القراءة من الكاش ─────────────────────────
+  /// عمر الذاكرة المؤقتة داخل الجلسة — تمنع إعادة الطلب لكل شاشة/ويدجت يفتح
+  /// نفس القائمة خلال ثوانٍ من غيره، رغم كوننا أونلاين (نفس المزوّد
+  /// [ReferenceRepository] يُستخدَم من شاشات متعددة عبر Riverpod).
+  static const _memoTtl = Duration(minutes: 5);
+
+  List<LocationCenter>? _centersMemo;
+  DateTime? _centersMemoAt;
+  List<Charity>? _charitiesMemo;
+  DateTime? _charitiesMemoAt;
+  final Map<String, (List<DropdownOption>, DateTime)> _optionsMemo = {};
+
+  bool _isFresh(DateTime? at) =>
+      at != null && DateTime.now().difference(at) < _memoTtl;
+
+  // ───────────────────────── القراءة — Online-First ─────────────────────────
 
   Future<List<LocationCenter>> centers() async {
-    final raw = await _readCache(DropdownKeys.locationsCacheKey);
-    if (raw == null) return const [];
+    if (_isFresh(_centersMemoAt)) return _centersMemo!;
 
-    final decoded = jsonDecode(raw);
-    return decoded is List
-        ? decoded
-              .whereType<Map<String, dynamic>>()
-              .map(LocationCenter.fromJson)
-              .toList(growable: false)
-        : const [];
+    if (_networkStatus.current.isOnline) {
+      try {
+        final fresh = await RetryPolicy.run(_api.locations);
+        AppLogger.data('Strategy: REMOTE (centers)');
+        _centersMemo = fresh;
+        _centersMemoAt = DateTime.now();
+        unawaited(
+          _writeCache(
+            DropdownKeys.locationsCacheKey,
+            jsonEncode(fresh.map((c) => c.toJson()).toList(growable: false)),
+          ),
+        );
+        return fresh;
+      } on ApiException catch (e) {
+        if (!e.isRetryable) rethrow;
+        // فشل شبكة رغم الأونلاين — نقع على الكاش لا نُفشل الشاشة.
+      }
+    }
+
+    AppLogger.data('Strategy: LOCAL (centers)');
+    return _cachedCenters();
   }
 
   /// قرى مركز بعينه — قائمة متتالية صحيحة.
@@ -50,6 +87,73 @@ class ReferenceRepository {
   }
 
   Future<List<Charity>> charities() async {
+    if (_isFresh(_charitiesMemoAt)) return _charitiesMemo!;
+
+    if (_networkStatus.current.isOnline) {
+      try {
+        final fresh = await RetryPolicy.run(_api.charities);
+        AppLogger.data('Strategy: REMOTE (charities)');
+        _charitiesMemo = fresh;
+        _charitiesMemoAt = DateTime.now();
+        unawaited(
+          _writeCache(
+            DropdownKeys.charitiesCacheKey,
+            jsonEncode(fresh.map((c) => c.toJson()).toList(growable: false)),
+          ),
+        );
+        return fresh;
+      } on ApiException catch (e) {
+        if (!e.isRetryable) rethrow;
+      }
+    }
+
+    AppLogger.data('Strategy: LOCAL (charities)');
+    return _cachedCharities();
+  }
+
+  Future<List<DropdownOption>> options(String key) async {
+    final memo = _optionsMemo[key];
+    if (memo != null && _isFresh(memo.$2)) return memo.$1;
+
+    if (_networkStatus.current.isOnline) {
+      try {
+        final fresh = await RetryPolicy.run(() => _api.dropdown(key));
+        AppLogger.data('Strategy: REMOTE (dropdown:$key)');
+        _optionsMemo[key] = (fresh.options, DateTime.now());
+        unawaited(
+          _writeCache(
+            key,
+            jsonEncode(
+              fresh.options.map((o) => o.toJson()).toList(growable: false),
+            ),
+          ),
+        );
+        return fresh.options;
+      } on ApiException catch (e) {
+        if (!e.isRetryable) rethrow;
+      }
+    }
+
+    AppLogger.data('Strategy: LOCAL (dropdown:$key)');
+    return _cachedOptions(key);
+  }
+
+  // ───────────────────────── القراءة من الكاش (Fallback) ─────────────────────────
+
+  Future<List<LocationCenter>> _cachedCenters() async {
+    final raw = await _readCache(DropdownKeys.locationsCacheKey);
+    if (raw == null) return const [];
+
+    final decoded = jsonDecode(raw);
+    return decoded is List
+        ? decoded
+              .whereType<Map<String, dynamic>>()
+              .map(LocationCenter.fromJson)
+              .toList(growable: false)
+        : const [];
+  }
+
+  Future<List<Charity>> _cachedCharities() async {
     final raw = await _readCache(DropdownKeys.charitiesCacheKey);
     if (raw == null) return const [];
 
@@ -62,7 +166,7 @@ class ReferenceRepository {
         : const [];
   }
 
-  Future<List<DropdownOption>> options(String key) async {
+  Future<List<DropdownOption>> _cachedOptions(String key) async {
     final raw = await _readCache(key);
     if (raw == null) return const [];
 
@@ -103,6 +207,10 @@ class ReferenceRepository {
   /// لا يُسقِط الباقي. يرجع الخطأ الأول لغرض العرض فقط.
   Future<ApiException?> refreshAll() async {
     ApiException? firstError;
+
+    _centersMemoAt = null;
+    _charitiesMemoAt = null;
+    _optionsMemo.clear();
 
     try {
       final centers = await _api.locations();

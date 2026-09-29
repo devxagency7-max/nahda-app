@@ -202,7 +202,7 @@ class _ReturnedCasesList extends StatelessWidget {
     return ListView.separated(
       padding: const EdgeInsets.all(AppSpacing.lg),
       itemCount: cases.length,
-      separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.md),
+      separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.md),
       itemBuilder: (context, index) {
         final item = cases[index];
         return _ReturnedCaseCard(caseItem: item, defaultAuthor: defaultAuthor);

@@ -288,7 +288,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 onPressed: () {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
-                                      content: Text('يرجى التواصل مع مسؤول النظام لإعادة تعيين كلمة المرور'),
+                                      content: Text('كلّم مسؤول النظام عشان يعملك تعيين لكلمة المرور'),
                                     ),
                                   );
                                 },

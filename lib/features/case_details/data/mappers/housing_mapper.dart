@@ -78,4 +78,72 @@ class HousingMapper {
     if (field.hasOther) return field.freeTextValue;
     return field.selected.first;
   }
+
+  /// يعيد بناء [HousingFormData] من شكل التخزين المحلي (`toCacheJson`) —
+  /// **بلا فقد**، عكس [housing_section.dart]'s `HousingSection` (نموذج عرض
+  /// مسطّح لا يحتمل استرجاع الفورم منه). يُستخدَم عند إعادة فتح تاب السكن
+  /// لعرض ما حفظه الأخصائي فعليًا بدل فورم فاضٍ.
+  static HousingFormData fromCacheJson(Map<String, dynamic> json) =>
+      HousingFormData(
+        housingDescription: json['housingDescription'] as String?,
+        housingType: _field(json, 'housingType', 'housingTypeOther'),
+        walls: _field(json, 'walls', 'wallsOther'),
+        roof: _field(json, 'roof', 'roofOther'),
+        floor: _field(json, 'floor', 'floorOther'),
+        entrance: _field(json, 'entrance', 'entranceOther'),
+        bathroomType: _field(json, 'bathroomType', null),
+        bathroomCondition: _field(json, 'bathroomCondition', null),
+        electricity: _field(json, 'electricity', null),
+        waterMeter: _field(json, 'waterMeter', null),
+        waterMotor: _field(json, 'waterMotor', null),
+        fridge: _field(json, 'fridge', null),
+        washer: _field(json, 'washer', null),
+        oven: _field(json, 'oven', null),
+        cookingAppliances: _field(json, 'cookingAppliances', null),
+        computer: _field(json, 'computer', null),
+        tv: _field(json, 'tv', null),
+        freezer: _field(json, 'freezer', null),
+        transportation: _field(json, 'transportation', null),
+        internet: _field(json, 'internet', null),
+      );
+
+  static MultiSelectField _field(
+    Map<String, dynamic> json,
+    String key,
+    String? otherKey,
+  ) => MultiSelectField(
+    selected: (json[key] as List?)?.whereType<String>().toSet() ?? {},
+    freeTextValue: otherKey != null ? json[otherKey] as String? : null,
+  );
+
+  /// يبني [HousingFormData] من استجابة `PUT`/`GET /housing` الفعلية من
+  /// الخادم (§19) — شكل **مختلف تمامًا** عن [toCacheJson] (قيمة نصية واحدة
+  /// لكل حقل، لا Multi-select). كل قيمة تُرفَع لعنصر وحيد في `selected`.
+  ///
+  /// حقول التجهيزات (`fridge`, `washer`, `oven`, `computer`, `tv`,
+  /// `freezer`, `bathroomType`, `waterMeter`) **لا وجود لها في استجابة
+  /// السكن** — تبقى فاضية هنا مهما كانت قيمتها المحفوظة محليًا سابقًا،
+  /// لأن العقد لا يرسلها ضمن هذا القسم أصلًا (راجع تعليق الملف).
+  static HousingFormData fromApiResponse(Map<String, dynamic> json) =>
+      HousingFormData(
+        housingDescription: json['description'] as String?,
+        housingType: _single_(json['ownership'] as String?),
+        walls: _single_(json['walls'] as String?),
+        roof: _single_(json['roof'] as String?),
+        floor: _single_(json['floor'] as String?),
+        entrance: _single_(json['entrance'] as String?),
+        bathroomCondition: _single_(json['bathroomCondition'] as String?),
+        electricity: _single_(json['electricity'] as String?),
+        waterMeter: _single_(json['water'] as String?),
+        waterMotor: _bool_(json['waterMotor'] as bool?),
+        transportation: _single_(json['transport'] as String?),
+        internet: _bool_(json['internet'] as bool?),
+      );
+
+  static MultiSelectField _single_(String? value) => MultiSelectField(
+    selected: (value == null || value.isEmpty) ? {} : {value},
+  );
+
+  static MultiSelectField _bool_(bool? value) =>
+      MultiSelectField(selected: value == true ? {'يوجد'} : {});
 }

@@ -65,7 +65,7 @@ class FieldVisitsScreen extends ConsumerWidget {
         ),
         body: visitsAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
-          error: (_, _) =>
+          error: (_, __) =>
               const Center(child: Text('تعذّر تحميل الزيارات')),
           data: (visits) {
             if (visits.isEmpty) {

@@ -1,7 +1,7 @@
 import 'case_full_details.dart';
 
-/// جلب تفاصيل الحالة الكاملة — التنفيذ الحالي Mock، لاحقًا API حقيقي
-/// (GET /api/v1/cases/{caseId}) بدون تغيير في UI/Use Case.
+/// جلب تفاصيل الحالة الكاملة من الكاش المحلي — راجع
+/// [CaseDetailsRepositoryImpl] للتفاصيل. لا مصدر بيانات وهمي.
 abstract class CaseDetailsRepository {
   Future<CaseFullDetails> getCaseDetails(String caseId);
 }

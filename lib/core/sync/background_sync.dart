@@ -2,14 +2,13 @@ import 'package:workmanager/workmanager.dart';
 
 import '../../features/attachments/data/attachment_uploader.dart';
 import '../../features/attachments/data/attachments_api.dart';
-import '../../features/auth/data/auth_api.dart';
-import '../../features/auth/data/auth_repository.dart';
 import '../../features/cases/data/cases_api.dart';
 import '../../features/cases/data/workflow_api.dart';
 import '../../features/field_visits/data/field_visits_api.dart';
 import '../../features/field_visits/data/field_visits_repository.dart';
 import '../../features/notifications/data/notifications_api.dart';
 import '../network/api_client.dart';
+import '../session/session_registry.dart';
 import '../storage/app_database.dart';
 import '../storage/secure_token_store.dart';
 import 'sync_engine.dart';
@@ -41,19 +40,29 @@ void backgroundSyncDispatcher() {
       // لا جلسة محفوظة أصلًا — لا داعي لأي اتصال شبكة، نجاح فوري.
       if (await tokenStore.read() == null) return true;
 
+      // معرّف صاحب التوكن **الحالي فعليًا** وقت هذا التشغيل — يُقرأ من
+      // Keychain (مشترك بين كل الـ Isolates)، لا من ذاكرة معلَّقة. يُستخدم
+      // لفلترة `SyncQueue` بالأسفل حتى لا يُنفَّذ هذا التشغيل عمليات حساب
+      // سابق بهوية الحساب الحالي (AUTH_SESSION_AUDIT.md، مشكلة #4 CRITICAL).
+      final currentUserJson = await tokenStore.readUser();
+      final currentUserId = currentUserJson?['id'] as String?;
+
+      // `SessionRegistry` جديد محليًا لهذا الـ Isolate — منفصل تمامًا عن
+      // نسخة تطبيق الواجهة (كل Isolate له ذاكرته)، فآلية "الجيل" التي تمنع
+      // ردودًا متأخرة من التأثير على جلسة لاحقة لا معنى لها هنا: هذه
+      // العملية بأكملها قصيرة العمر (تشغيل واحد ثم إنهاء) ولا تتزامن مع أي
+      // جلسة أخرى داخل نفس الـ Isolate.
+      final session = SessionRegistry();
       final apiClient = ApiClient.create(
         tokenStore: tokenStore,
+        session: session,
         // لا واجهة تستمع لإشارة "انتهت الجلسة" داخل isolate خلفي؛
-        // AuthRepository.canFlushSyncQueue أدناه يكفي لإيقاف التفريغ بأمان
+        // SecureTokenStore.canFlushSyncQueue أدناه يكفي لإيقاف التفريغ بأمان
         // لو الجلسة فعلًا منتهية، بلا حاجة لتفاعل واجهة هنا.
         onSessionExpired: () async {},
       );
 
-      final queue = SyncQueueDao(db);
-      final authRepository = AuthRepository(
-        api: AuthApi(apiClient),
-        tokenStore: tokenStore,
-      );
+      final queue = SyncQueueDao(db, currentUserId: () => currentUserId);
       final attachmentUploader = AttachmentUploader(
         api: AttachmentsApi(apiClient),
         db: db,
@@ -69,7 +78,7 @@ void backgroundSyncDispatcher() {
         casesApi: CasesApi(apiClient),
         workflowApi: WorkflowApi(apiClient),
         notificationsApi: NotificationsApi(apiClient),
-        ensureFreshSession: authRepository.canFlushSyncQueue,
+        ensureFreshSession: tokenStore.canFlushSyncQueue,
         uploadAttachmentsForCase: attachmentUploader.uploadAllForCase,
         submitPendingVisitsForCase: (caseId) async {
           final pending = await fieldVisitsRepository.pendingVisits();

@@ -1,11 +1,26 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
+import 'package:uuid/uuid.dart';
 
+import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/network/network_status_service.dart';
+import '../../../core/network/retry_policy.dart';
 import '../../../core/storage/app_database.dart';
+import '../../../core/sync/sync_engine.dart';
 import '../../../core/sync/sync_operation.dart';
 import '../../../core/sync/sync_queue.dart';
+import '../../case_details/data/mappers/agriculture_mapper.dart';
+import '../../case_details/data/mappers/assessed_needs_mapper.dart';
+import '../../case_details/data/mappers/classification_mapper.dart';
+import '../../case_details/data/mappers/family_members_mapper.dart';
+import '../../case_details/data/mappers/housing_mapper.dart';
+import '../../case_details/data/mappers/initial_need_mapper.dart';
+import '../../case_details/data/mappers/opinions_mapper.dart';
+import '../../case_details/data/mappers/utilities_mapper.dart';
+import '../../case_details/domain/sections/support_section.dart';
 import '../domain/case_status.dart';
 import 'cases_api.dart';
 import 'dto/case_details_dto.dart';
@@ -26,52 +41,63 @@ class RefreshOutcome {
   bool get isOfflineFailure => error?.isRetryable ?? false;
 }
 
-/// مستودع الحالات — **يقرأ من Drift دائمًا، لا من الشبكة**.
+/// مستودع الحالات — Online-First: طابور العمل ([getWorkQueue]) يُجلب من
+/// الخادم مباشرة عند توفّر الاتصال ويُرجَع للواجهة فورًا؛ الكاش المحلي
+/// (Drift) يُحدَّث في نفس الوقت ليبقى مصدر القراءة الوحيد أثناء الأوفلاين
+/// أو عند فشل الشبكة رغم كوننا أونلاين.
 ///
-/// المبدأ الحاكم (§2.1 من خطة الربط): قاعدة البيانات المحلية هي مصدر الحقيقة
-/// للواجهة. الشاشة تشترك في `Stream` من Drift؛ [refreshWorkQueue] و
-/// [refreshCaseDetails] تجلبان من الشبكة وتكتبان في Drift فتتحدّث الشاشة.
-///
-/// لا شاشة تنتظر الشبكة، ولا شاشة تفشل لانقطاعها.
+/// الحفاظ/المفضّلة/الحالات المرتجعة ([watchBookmarked], [watchReturned]) ما
+/// زالت تُقرأ من الكاش مباشرة (Stream) — خارج نطاق هذا التحويل حاليًا.
 class CasesRepository {
   CasesRepository({
     required CasesApi api,
     required AppDatabase db,
     required SyncQueueDao queue,
+    required SyncEngine syncEngine,
+    NetworkStatusService? networkStatus,
   }) : _api = api,
        _db = db,
-       _queue = queue;
+       _queue = queue,
+       _syncEngine = syncEngine,
+       _networkStatus = networkStatus;
 
   final CasesApi _api;
   final AppDatabase _db;
   final SyncQueueDao _queue;
 
-  // ───────────────────────── القراءة من الكاش ─────────────────────────
+  /// `null` فقط في اختبارات لا تحتاج تمييز أونلاين/أوفلاين قبل قراءات
+  /// online-first (`getWorkQueue`) — عندها تُعامَل كأوفلاين دومًا فتُقرأ من
+  /// الكاش مباشرة، وهو المسار الذي تختبره تلك الاختبارات أصلًا.
+  final NetworkStatusService? _networkStatus;
 
-  /// طابور عمل الأخصائي من الكاش.
-  ///
-  /// يظهر فورًا عند فتح التطبيق حتى بلا اتصال.
-  Stream<List<CachedCaseRow>> watchWorkQueue() {
-    return (_db.select(_db.cachedCases)
-          ..where(
-            (t) => t.status.isIn([
-              'assigned',
-              'in_research',
-              'returned_to_worker',
-            ]),
-          )
-          ..orderBy([
-            // العاجل أولًا، ثم الأقدم تحديثًا.
-            (t) => OrderingTerm.desc(t.nextVisitDate),
-            (t) => OrderingTerm.desc(t.fetchedAt),
-          ]))
-        .watch();
-  }
+  /// يُحاوَل الإرسال عبره فورًا قبل أي `enqueue` — الاتصال هو الوضع الغالب،
+  /// فتفضيله على التأجيل للطابور يعطي المستخدم شعورًا بأن عمله وصل فعلًا،
+  /// لا مجرد "اتحفظ محليًا" كل مرة (راجع [SyncEngine.trySendImmediately]).
+  final SyncEngine _syncEngine;
+  static const _uuid = Uuid();
+
+  // ───────────────────────── القراءة من الكاش ─────────────────────────
 
   Stream<List<CachedCaseRow>> watchBookmarked() =>
       (_db.select(_db.cachedCases)
             ..where((t) => t.isBookmarked.equals(true))
             ..orderBy([(t) => OrderingTerm.desc(t.fetchedAt)]))
+          .watch();
+
+  /// الحالات المُسنَدة لهذا الأخصائي (assigned) — تُعرَض في "الحالات
+  /// المحفوظة" فور إرسالها من الـ Data Entry، بلا حاجة لأي فعل قبول — بالإضافة
+  /// إلى الحالات التي كلّف الأخصائي نفسه بها (`acceptAssignment` ينقلها إلى
+  /// `in_research`) فتبقى ظاهرة في نفس الكارت بدل أن تختفي بعد الضغط على
+  /// "تكليف".
+  Stream<List<CachedCaseRow>> watchAssigned() =>
+      (_db.select(_db.cachedCases)
+            ..where(
+              (t) => t.status.isIn([
+                CaseStatus.assigned.wireValue,
+                CaseStatus.inResearch.wireValue,
+              ]),
+            )
+            ..orderBy([(t) => OrderingTerm.desc(t.serverUpdatedAt)]))
           .watch();
 
   Stream<List<CachedCaseRow>> watchReturned() =>
@@ -133,6 +159,64 @@ class CasesRepository {
     return paged.items;
   }
 
+  /// `GET /cases/{caseId}/support` (`history[]` فقط) — سجل الدعم المصروف
+  /// فعليًا، حيّ من الشبكة مباشرة بلا كاش، نفس فلسفة [search]: عرض للقراءة
+  /// فقط، لا مسار تعديل مرتبط به اليوم فتستحق بيانات قديمة مخزَّنة عناء
+  /// الكاش. يرمي [ApiException] عند فشل الشبكة — على المستدعي التعامل معه.
+  Future<List<SupportHistoryEntry>> supportHistory(String caseId) async {
+    final raw = await _api.support(caseId);
+    final history = raw['history'];
+    if (history is! List) return const [];
+    return history
+        .whereType<Map<String, dynamic>>()
+        .map(SupportHistoryEntry.fromJson)
+        .toList(growable: false);
+  }
+
+  // ───────────────────────── القراءة — Online-First ─────────────────────────
+
+  /// طابور العمل — Online-First: يجلب من الخادم مباشرة عند توفّر الاتصال
+  /// ويرجعه للواجهة فورًا (مع كتابته في الكاش)، ويقع على الكاش المحلي فقط
+  /// عند الأوفلاين أو فشل شبكة حقيقي.
+  Future<List<CachedCaseRow>> getWorkQueue() async {
+    if (_networkStatus?.current.isOnline ?? false) {
+      try {
+        final paged = await RetryPolicy.run(
+          () => _api.workQueue(page: 1, limit: 100),
+        );
+        await _upsertListItems(paged.items);
+        AppLogger.data('Strategy: REMOTE (workQueue)');
+      } on ApiException catch (e) {
+        if (!e.isRetryable) rethrow;
+        AppLogger.data('Strategy: LOCAL (workQueue) — network failure');
+      }
+    } else {
+      AppLogger.data('Strategy: LOCAL (workQueue) — offline');
+    }
+
+    return _readWorkQueueFromCache();
+  }
+
+  Future<List<CachedCaseRow>> _readWorkQueueFromCache() {
+    return (_db.select(_db.cachedCases)
+          ..where(
+            (t) => t.status.isIn([
+              'assigned',
+              'in_research',
+              'returned_to_worker',
+              'pending_review',
+              'pending_approval',
+              'approved',
+              'rejected',
+            ]),
+          )
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.nextVisitDate),
+            (t) => OrderingTerm.desc(t.fetchedAt),
+          ]))
+        .get();
+  }
+
   // ───────────────────────── التحديث من الشبكة ─────────────────────────
 
   /// يجلب طابور العمل ويكتبه في Drift.
@@ -153,14 +237,179 @@ class CasesRepository {
   ///
   /// **يجب استدعاؤها قبل أي كتابة** للحصول على `rowVersion` طازج — تعديل قسم
   /// آخر (أو مستخدم آخر) قد يكون رفع نسخة الحالة بينما نحن أوفلاين (§19).
+  ///
+  /// منذ رد الباك إند على طلب 13 (`BACKEND_CHANGE_RESPONSE`)، الاستجابة
+  /// نفسها تحمل كل الأقسام (`familyMembers`, `housing`, `utilities`,
+  /// `agriculture`, `financial`, `initialNeeds`, `classification`,
+  /// `assessedNeeds`) — نكتبها كلها في `CachedSections` هنا **فقط لو القسم
+  /// غير معدَّل محليًا الآن** (`isDirty == false`)، وإلا كنا سنمحو تعديلًا
+  /// معلّقًا في الطابور بنسخة الخادم القديمة قبل وصوله (§14.3، نفس قاعدة
+  /// "لا تُكمل الإعادة على افتراض قديم" بس في اتجاه القراءة).
   Future<RefreshOutcome> refreshCaseDetails(String caseId) async {
     try {
-      final details = await _api.details(caseId);
+      final raw = await _api.details(caseId);
+      final details = CaseDetailsDto.fromJson(raw);
       await _upsertDetails(details);
+      await _cacheSectionsFromDetails(caseId, raw);
       return const RefreshOutcome();
     } on ApiException catch (e) {
       return RefreshOutcome(error: e);
     }
+  }
+
+  /// يكتب كل قسم مضمّن في استجابة `GET /cases/{id}` في `CachedSections`،
+  /// بنفس الشكل الذي يكتبه `saveSection` محليًا — فيقرأه `CaseDetailsRepositoryImpl`
+  /// والمابرات كأي قسم محفوظ.
+  Future<void> _cacheSectionsFromDetails(
+    String caseId,
+    Map<String, dynamic> raw,
+  ) async {
+    await _cacheSectionIfClean(
+      caseId,
+      'family_members',
+      raw['familyMembers'],
+      (json) => FamilyMembersMapper.toCacheJson(
+        FamilyMembersMapper.fromApiResponse(json),
+      ),
+    );
+    await _cacheSectionIfClean(
+      caseId,
+      'housing',
+      raw['housing'],
+      (json) => HousingMapper.toCacheJson(HousingMapper.fromApiResponse(json)),
+    );
+    await _cacheSectionIfClean(
+      caseId,
+      'utilities',
+      raw['utilities'],
+      (json) =>
+          UtilitiesMapper.toCacheJson(UtilitiesMapper.fromApiResponse(json)),
+    );
+    await _cacheSectionIfClean(
+      caseId,
+      'agriculture',
+      raw['agriculture'],
+      (json) =>
+          AgricultureMapper.toCacheJson(AgricultureMapper.fromApiResponse(json)),
+    );
+    await _cacheSectionIfClean(
+      caseId,
+      'initial_needs',
+      raw['initialNeeds'],
+      (json) =>
+          InitialNeedMapper.toCacheJson(InitialNeedMapper.fromApiResponse(json)),
+    );
+    await _cacheSectionIfClean(
+      caseId,
+      'classification',
+      raw['classification'],
+      (json) => ClassificationMapper.toCacheJson(
+        ClassificationMapper.fromApiResponse(json),
+      ),
+    );
+    await _cacheSectionIfClean(
+      caseId,
+      'assessed_needs',
+      raw['assessedNeeds'],
+      (json) => AssessedNeedsMapper.toCacheJson(
+        AssessedNeedsMapper.fromApiResponse(json),
+      ),
+    );
+    // financial: لا fromApiResponse بعد — شكل الشاشة (٨ بنود افتراضية) لا
+    // يطابق العقد (٥ فئات ثابتة فقط)، موثّق كتصميم يحتاج تصحيحًا منفصلًا في
+    // FinancialMapper. تُترَك كما هي (كاش محلي فقط) حتى وقتها.
+
+    // رأيا المراجع والمدير (View-only) — مفتاحان منفصلان عن 'opinions'
+    // (المحجوز لمسودة الأخصائي المحلية القابلة للتعديل) حتى لا نستبدل تعديلًا
+    // معلّقًا للأخصائي ببيانات قراءة، ولا العكس. رد الباك إند على طلب 14.
+    final opinions = raw['opinions'];
+    if (opinions is Map<String, dynamic>) {
+      final parsed = OpinionsMapper.fromApiResponse(opinions);
+      await _cacheSectionIfClean(
+        caseId,
+        'reviewer_opinion',
+        opinions['reviewer'] ?? const <String, dynamic>{},
+        (_) => OpinionsMapper.reviewerToCacheJson(parsed.reviewer),
+      );
+      await _cacheSectionIfClean(
+        caseId,
+        'manager_opinion',
+        opinions['manager'] ?? const <String, dynamic>{},
+        (_) => OpinionsMapper.directorToCacheJson(parsed.director),
+      );
+    }
+    // آخر رأي أخصائي أُرسِل فعليًا (View-only) — `opinions.worker`، مضمَّن
+    // أصلًا في `GET /cases/{id}` نفسه (بلا endpoint منفصل)، بنفس شكل
+    // reviewer/manager زائد `detailedReport` متداخل جواه. مفتاح مستقل عن
+    // 'opinions' (مسودة الكتابة المحلية) لنفس سبب فصل
+    // reviewer_opinion/manager_opinion أعلاه.
+    if (opinions is Map<String, dynamic>) {
+      await _cacheSectionIfClean(
+        caseId,
+        'worker_opinion_previous',
+        opinions['worker'] ?? const <String, dynamic>{},
+        (_) => OpinionsMapper.previousWorkerToCacheJson(
+          OpinionsMapper.previousWorkerFromRaw(raw),
+        ),
+      );
+    }
+  }
+
+  Future<void> _cacheSectionIfClean(
+    String caseId,
+    String sectionKey,
+    Object? rawSection,
+    Map<String, dynamic> Function(Map<String, dynamic>) toCacheJson,
+  ) async {
+    if (rawSection is! Map<String, dynamic>) return;
+
+    final existing =
+        await (_db.select(_db.cachedSections)..where(
+              (t) =>
+                  t.caseId.equals(caseId) & t.sectionKey.equals(sectionKey),
+            ))
+            .getSingleOrNull();
+    // تعديل معلّق لم يُرفَع بعد — لا نستبدله ببيانات الخادم القديمة.
+    if (existing != null && existing.isDirty) return;
+
+    await _db
+        .into(_db.cachedSections)
+        .insertOnConflictUpdate(
+          CachedSectionsCompanion.insert(
+            caseId: caseId,
+            sectionKey: sectionKey,
+            dataJson: jsonEncode(toCacheJson(rawSection)),
+            rowVersion: Value(_sectionRowVersion(rawSection)),
+            isDirty: const Value(false),
+            updatedAt: DateTime.now(),
+          ),
+        );
+  }
+
+  int? _sectionRowVersion(Map<String, dynamic> json) => switch (json['rowVersion']) {
+    final int i => i,
+    final num n => n.toInt(),
+    _ => null,
+  };
+
+  /// يجلب `rowVersion` **الحالي فعليًا على الخادم** لقسم "مفرد" (housing/
+  /// agriculture/classification) مباشرة من `GET /cases/{id}`، متجاوزًا
+  /// الكاش المحلي عمدًا.
+  ///
+  /// **لماذا لا [readSection]/[_cacheSectionIfClean]؟** الأخير يرفض تحديث
+  /// الكاش لأي قسم `isDirty == true` (راجع تعليقه) — وهذا بالضبط حال القسم
+  /// الذي نحاول حفظه الآن (المستخدم عدّله لتوّه). فحتى بعد [refreshCaseDetails]
+  /// ناجحة، `rowVersion` المخزَّن محليًا يبقى قديمًا/`null`، فيُرسَل حفظ
+  /// لاحق بنسخة خاطئة ويرتدّ بـ 409 زائف رغم عدم وجود أي تعارض فعلي. هذه
+  /// الدالة تقرأ من استجابة الخادم الطازجة مباشرة، لا من الكاش المحمي.
+  Future<int?> fetchFreshSectionRowVersion(
+    String caseId,
+    String sectionKey,
+  ) async {
+    final raw = await _api.details(caseId);
+    final section = raw[sectionKey];
+    if (section is! Map<String, dynamic>) return null;
+    return _sectionRowVersion(section);
   }
 
   /// يجلب أفراد الأسرة التابعين من الخادم (`GET /cases/{id}/family-members`)
@@ -279,7 +528,10 @@ class CasesRepository {
   /// [apiPayload]/[syncType] معًا أو لا شيء: قسم بلا `apiPayload` يُحفَظ محليًا
   /// فقط بلا `enqueue` — هذه بالضبط الأقسام الموثّقة في `BACKEND_CHANGE_REQUEST.md`
   /// كفجوة (`SocialAssessmentSection`, تفاصيل رأي الأخصائي الحرة...).
-  Future<void> saveSection({
+  ///
+  /// يرجع `true` لو وصل القسم للخادم فعلًا الآن. يرمي [ApiException] لو
+  /// رفضه الخادم رفضًا نهائيًا (يبقى محفوظًا محليًا، ولا يدخل الطابور).
+  Future<bool> saveSection({
     required String caseId,
     required String sectionKey,
     required Map<String, dynamic> dataJson,
@@ -308,14 +560,33 @@ class CasesRepository {
           ),
         );
 
-    if (apiPayload != null && syncType != null) {
-      await _queue.enqueue(
-        type: syncType,
-        caseId: caseId,
-        payload: apiPayload,
-        rowVersion: rowVersion,
-      );
+    if (apiPayload == null || syncType == null) return false;
+
+    final result = await _syncEngine.trySendImmediately(
+      type: syncType,
+      caseId: caseId,
+      payload: apiPayload,
+    );
+
+    if (result.isSent) {
+      await (_db.update(_db.cachedSections)..where(
+            (t) => t.caseId.equals(caseId) & t.sectionKey.equals(sectionKey),
+          ))
+          .write(const CachedSectionsCompanion(isDirty: Value(false)));
+      // نسخ الصفوف (rowVersion) تغيّرت على الخادم — نجلبها الآن حتى لا يحمل
+      // الحفظ التالي نسخة قديمة فيرتدّ بتعارض.
+      unawaited(refreshCaseDetails(caseId));
+      return true;
     }
+    if (result.isRejected) throw result.error!;
+
+    await _queue.enqueue(
+      type: syncType,
+      caseId: caseId,
+      payload: apiPayload,
+      rowVersion: rowVersion,
+    );
+    return false;
   }
 
   /// يقرأ قسمًا محفوظًا محليًا لهذه الحالة، أو `null` إن لم يُحفَظ بعد.
@@ -375,9 +646,12 @@ class CasesRepository {
   /// تبقى في الطابور بحالة `conflict`/`dead_lettered` وتظهر في شاشة حالة
   /// المزامنة؛ لا نتراجع محليًا عن الكتابة التفاؤلية هنا تلقائيًا، لأن ذلك
   /// قرار يحتاج عرضًا صريحًا للمستخدم لا انقلابًا صامتًا للحالة.
-  Future<void> acceptAssignment(String caseId) async {
+  ///
+  /// يرجع `true` لو وصل للخادم الآن. يرمي [ApiException] لو رفضه الخادم
+  /// نهائيًا — بعد إرجاع الحالة المحلية لما كانت عليه.
+  Future<bool> acceptAssignment(String caseId) async {
     final row = await readCase(caseId);
-    if (row == null) return;
+    if (row == null) return false;
 
     await (_db.update(_db.cachedCases)..where((t) => t.id.equals(caseId)))
         .write(
@@ -387,13 +661,56 @@ class CasesRepository {
           ),
         );
 
+    // يُولَّد هنا لا داخل `enqueue` — لو فشل الإرسال الفوري يصل الخادم لاحقًا
+    // بنفس المفتاح (§15.3).
+    final idempotencyKey = _uuid.v4();
+    final payload = {'caseRowVersion': row.rowVersion};
+
+    final result = await _syncEngine.trySendImmediately(
+      type: SyncOperationType.acceptCase,
+      caseId: caseId,
+      payload: payload,
+      idempotencyKey: idempotencyKey,
+      // سباق تفاعلي — الأخصائي مستنٍ ردًا فوريًا، لا طابور خلفي صامت إذا
+      // سبقه أخصائي آخر أو تغيّرت الحالة (409/422/403 كلها conflict هنا).
+      rejectConflictsImmediately: true,
+    );
+    if (result.isSent) {
+      await _markCaseSynced(caseId);
+      return true;
+    }
+    if (result.isRejected) {
+      await _revertCaseStatus(row);
+      // نحدّث من الخادم الآن — المستخدم سيرى فورًا لمن آلت الحالة فعليًا،
+      // لا فقط رسالة الخطأ بمعزل عن الواقع الجديد.
+      unawaited(refreshCaseDetails(caseId));
+      throw result.error!;
+    }
+
     await _queue.enqueue(
       type: SyncOperationType.acceptCase,
       caseId: caseId,
-      payload: {'caseRowVersion': row.rowVersion},
+      payload: payload,
       rowVersion: row.rowVersion,
+      idempotencyKey: idempotencyKey,
     );
+    return false;
   }
+
+  Future<void> _markCaseSynced(String caseId) async {
+    await (_db.update(_db.cachedCases)..where((t) => t.id.equals(caseId)))
+        .write(const CachedCasesCompanion(syncState: Value('synced')));
+    unawaited(refreshCaseDetails(caseId));
+  }
+
+  Future<void> _revertCaseStatus(CachedCaseRow original) =>
+      (_db.update(_db.cachedCases)..where((t) => t.id.equals(original.id)))
+          .write(
+            CachedCasesCompanion(
+              status: Value(original.status),
+              syncState: Value(original.syncState),
+            ),
+          );
 
   /// إرسال رأي الأخصائي — `POST /cases/{id}/opinions/worker` عبر طابور
   /// المزامنة. ينقل الحالة لـ `pending_review` ويُخرجها من نافذة تعديل
@@ -408,13 +725,16 @@ class CasesRepository {
   /// نفسها في شاشة حالة المزامنة؛ **لا نتراجع محليًا عن الكتابة التفاؤلية
   /// هنا تلقائيًا**، بنفس منطق [acceptAssignment] أعلاه — انقلاب صامت للحالة
   /// أسوأ من عرض صريح للمستخدم.
-  Future<void> submitWorkerOpinion({
+  ///
+  /// يرجع `true` لو وصل للخادم الآن. يرمي [ApiException] لو رفضه الخادم
+  /// نهائيًا (مثل "الحالة غير مكتملة بعد") — بعد إرجاع الحالة المحلية.
+  Future<bool> submitWorkerOpinion({
     required String caseId,
     required String decision,
     String? notes,
   }) async {
     final row = await readCase(caseId);
-    if (row == null) return;
+    if (row == null) return false;
 
     await (_db.update(_db.cachedCases)..where((t) => t.id.equals(caseId)))
         .write(
@@ -424,21 +744,62 @@ class CasesRepository {
           ),
         );
 
-    await _queue.enqueue(
+    final idempotencyKey = _uuid.v4();
+    final payload = {
+      'decision': decision,
+      'notes': notes,
+      'caseRowVersion': row.rowVersion,
+    };
+
+    final result = await _syncEngine.trySendImmediately(
       type: SyncOperationType.submitWorkerOpinion,
       caseId: caseId,
-      payload: {
-        'decision': decision,
-        'notes': notes,
-        'caseRowVersion': row.rowVersion,
-      },
-      rowVersion: row.rowVersion,
+      payload: payload,
+      idempotencyKey: idempotencyKey,
     );
+
+    if (result.isRejected) {
+      await _revertCaseStatus(row);
+      throw result.error!;
+    }
+
+    if (result.isSent) {
+      await _markCaseSynced(caseId);
+    } else {
+      await _queue.enqueue(
+        type: SyncOperationType.submitWorkerOpinion,
+        caseId: caseId,
+        payload: payload,
+        rowVersion: row.rowVersion,
+        idempotencyKey: idempotencyKey,
+      );
+    }
+
+    // يُخزَّن هنا **فقط** للعرض عند إعادة فتح تاب الرأي — `POST
+    // /opinions/worker` بلا مسار قراءة رجوع، ولا يُحذَف هذا القسم بعد
+    // نجاح المزامنة (خلاف عملية الطابور نفسها) لأن التاب لسه محتاج يعرض
+    // ما أُرسِل.
+    final submitted = OpinionsMapper.fromWireDecision(
+      decision: decision,
+      notes: notes,
+      submittedAtUtc: DateTime.now().toUtc(),
+    );
+
+    await _db
+        .into(_db.cachedSections)
+        .insertOnConflictUpdate(
+          CachedSectionsCompanion.insert(
+            caseId: caseId,
+            sectionKey: 'opinions',
+            dataJson: jsonEncode(OpinionsMapper.toCacheJson(submitted)),
+            isDirty: const Value(false),
+            updatedAt: DateTime.now(),
+          ),
+        );
+    return result.isSent;
   }
 
-  /// تبديل الحفظ — يكتب محليًا **فورًا** ويضع العملية في الطابور.
-  ///
-  /// الواجهة تستجيب لحظيًا؛ الرفع يحدث حين تسمح الشبكة.
+  /// تبديل الحفظ — يكتب محليًا **فورًا** ثم يرسل للخادم.
   Future<void> toggleBookmark(String caseId) async {
     final row = await readCase(caseId);
     if (row == null) return;
@@ -448,13 +809,23 @@ class CasesRepository {
     await (_db.update(_db.cachedCases)..where((t) => t.id.equals(caseId)))
         .write(CachedCasesCompanion(isBookmarked: Value(next)));
 
-    await _queue.enqueue(
-      type: next
-          ? SyncOperationType.bookmarkCase
-          : SyncOperationType.unbookmarkCase,
+    final type = next
+        ? SyncOperationType.bookmarkCase
+        : SyncOperationType.unbookmarkCase;
+
+    final result = await _syncEngine.trySendImmediately(
+      type: type,
       caseId: caseId,
       payload: const {},
     );
+    if (result.isSent) return;
+    if (result.isRejected) {
+      await (_db.update(_db.cachedCases)..where((t) => t.id.equals(caseId)))
+          .write(CachedCasesCompanion(isBookmarked: Value(row.isBookmarked)));
+      throw result.error!;
+    }
+
+    await _queue.enqueue(type: type, caseId: caseId, payload: const {});
   }
 
   // ───────────────────────── الكتابة في الكاش ─────────────────────────
@@ -508,6 +879,12 @@ class CasesRepository {
       }
     });
   }
+
+  /// مدخل اختباري لمسار الكتابة في `CachedCases` بلا شبكة — يتيح التحقق من
+  /// أن رحلة الذهاب والعودة (DTO ← JSON ← Drift ← DTO) لا تُسقط أي حقل.
+  
+  Future<void> cacheDetailsForTest(CaseDetailsDto details) =>
+      _upsertDetails(details);
 
   Future<void> _upsertDetails(CaseDetailsDto details) async {
     final now = DateTime.now();
@@ -568,6 +945,20 @@ class CasesRepository {
       'centerId': d.beneficiary.centerId,
       'villageId': d.beneficiary.villageId,
       'rowVersion': d.beneficiary.rowVersion,
+      // الحقول العشرة المضافة في رد الباك إند (commit bcc9d61) — لازم تتكتب
+      // هنا كمان، مش بس تتقري في `BeneficiaryDto.fromJson`: ده الشكل اللي
+      // بيترجع منه `cachedDetails()` الحالة كلها، والتاب بيقرأ منه حصريًا.
+      // إغفالها كان بيخلي الوظيفة/الدخل يرجعوا null دايمًا مهما كان الرد طازج.
+      'religion': d.beneficiary.religion,
+      'education': d.beneficiary.education,
+      'maritalStatus': d.beneficiary.maritalStatus,
+      'healthStatus': d.beneficiary.healthStatus,
+      'employmentStatus': d.beneficiary.employmentStatus,
+      'job': d.beneficiary.job,
+      'monthlyIncome': d.beneficiary.monthlyIncome,
+      'takafulBeneficiary': d.beneficiary.takafulBeneficiary,
+      'takafulAmount': d.beneficiary.takafulAmount,
+      'headRelation': d.beneficiary.headRelation,
     },
     'completion': {
       'percentage': d.completionPercentage,

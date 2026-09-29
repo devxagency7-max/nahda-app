@@ -1,3 +1,6 @@
+import 'package:flutter/material.dart';
+
+import '../../../core/theme/app_colors.dart';
 import 'case_priority.dart';
 
 /// حالة الحالة من منظور الأخصائي — Social Worker Spec §39.
@@ -10,6 +13,26 @@ enum CaseWorkStatus {
   returnedFromManager, // RETURNED_FROM_MANAGER — مرتجعة من المدير
   readyForReview, // READY_FOR_REVIEW
   submittedForReview, // UNDER_REVIEW — تم إرسالها فعليًا للمراجع
+
+  /// `pending_assignment` على الخادم — غير مُسندة لأي أخصائي بعد. **لا
+  /// تُخلَط مع [assigned]**: كانت مدمجة فيها سابقًا فتعرض "مسندة إليك" على
+  /// حالة لم تُسند فعليًا لأحد — بطاقتها تعرض بدلًا من ذلك زر "تكليف"
+  /// (self-accept عبر `POST /cases/{id}/accept`، §2.2 من عقد الموبايل).
+  pendingAssignment,
+
+  /// `draft` على الخادم — حالة اتسجلت بس لسه محدش سنّدها ولا اتكلف بيها
+  /// حد. **لا تُخلَط مع [assigned]**: كانت مدمجة فيها سابقًا فتعرض "مسندة
+  /// إليك" على حالة لسه مسودة فعليًا.
+  draft,
+
+  /// `pending_approval` على الخادم — عند مدير الفرع بانتظار القرار النهائي.
+  pendingApproval,
+
+  /// `approved` على الخادم — حالة نهائية، اعتُمدت.
+  approved,
+
+  /// `rejected` على الخادم — حالة نهائية، اترفضت.
+  rejected,
 }
 
 extension CaseWorkStatusX on CaseWorkStatus {
@@ -21,6 +44,41 @@ extension CaseWorkStatusX on CaseWorkStatus {
     CaseWorkStatus.returnedFromManager => 'مرتجعة من المدير',
     CaseWorkStatus.readyForReview => 'جاهزة للإرسال',
     CaseWorkStatus.submittedForReview => 'تم الإرسال للمراجع',
+    CaseWorkStatus.pendingAssignment => 'متاحة للتكليف',
+    CaseWorkStatus.draft => 'مسودة',
+    CaseWorkStatus.pendingApproval => 'بانتظار اعتماد المدير',
+    CaseWorkStatus.approved => 'معتمدة',
+    CaseWorkStatus.rejected => 'مرفوضة',
+  };
+
+  Color get backgroundColor => switch (this) {
+    CaseWorkStatus.assigned => AppColors.primaryLight,
+    CaseWorkStatus.visitScheduled => AppColors.primaryLight,
+    CaseWorkStatus.inProgress => AppColors.warningBg,
+    CaseWorkStatus.returnedFromReview => AppColors.dangerBg,
+    CaseWorkStatus.returnedFromManager => AppColors.dangerBg,
+    CaseWorkStatus.readyForReview => AppColors.successBg,
+    CaseWorkStatus.submittedForReview => AppColors.warningBg,
+    CaseWorkStatus.pendingAssignment => AppColors.primaryLight,
+    CaseWorkStatus.draft => AppColors.surfaceMuted,
+    CaseWorkStatus.pendingApproval => AppColors.warningBg,
+    CaseWorkStatus.approved => AppColors.successBg,
+    CaseWorkStatus.rejected => AppColors.dangerBg,
+  };
+
+  Color get color => switch (this) {
+    CaseWorkStatus.assigned => AppColors.primary,
+    CaseWorkStatus.visitScheduled => AppColors.primary,
+    CaseWorkStatus.inProgress => AppColors.warning,
+    CaseWorkStatus.returnedFromReview => AppColors.danger,
+    CaseWorkStatus.returnedFromManager => AppColors.danger,
+    CaseWorkStatus.readyForReview => AppColors.success,
+    CaseWorkStatus.submittedForReview => AppColors.warning,
+    CaseWorkStatus.pendingAssignment => AppColors.primary,
+    CaseWorkStatus.draft => AppColors.textMuted,
+    CaseWorkStatus.pendingApproval => AppColors.warning,
+    CaseWorkStatus.approved => AppColors.success,
+    CaseWorkStatus.rejected => AppColors.danger,
   };
 }
 

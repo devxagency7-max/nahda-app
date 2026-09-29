@@ -64,4 +64,68 @@ class FamilyMembersMapper {
     ],
     'caseRowVersion': caseRowVersion,
   };
+
+  /// يعيد بناء [FamilyMembersFormData] من شكل التخزين المحلي (`toCacheJson`)
+  /// — بلا فقد. يُستخدَم عند إعادة فتح تاب أفراد الأسرة لعرض ما حفظه
+  /// الأخصائي فعليًا بدل فورم فاضٍ.
+  static FamilyMembersFormData fromCacheJson(Map<String, dynamic> json) {
+    final rawMembers = json['members'] as List? ?? const [];
+    return FamilyMembersFormData(
+      members: [
+        for (final m in rawMembers.whereType<Map<String, dynamic>>())
+          FamilyMemberFormData(
+            name: m['name'] as String? ?? '',
+            relation: m['relation'] as String? ?? '',
+            nationalId: m['nationalId'] as String?,
+            age: m['age'] as int?,
+            gender: m['gender'] as String?,
+            religion: m['religion'] as String?,
+            isStudent: m['isStudent'] as bool? ?? false,
+            educationStage: m['educationStage'] as String?,
+            educationGrade: m['educationGrade'] as String?,
+            universityName: m['universityName'] as String?,
+            nonStudentEducation: m['nonStudentEducation'] as String?,
+            job: m['job'] as String?,
+            monthlyIncome: (m['monthlyIncome'] as num?)?.toDouble(),
+            takafulKarama: m['takafulKarama'] as bool? ?? false,
+            takafulKaramaAmount: (m['takafulKaramaAmount'] as num?)
+                ?.toDouble(),
+            notes: m['notes'] as String?,
+          ),
+      ],
+    );
+  }
+
+  /// يبني [FamilyMembersFormData] من استجابة `PUT`/`GET /family-members`
+  /// الفعلية من الخادم (§19) — أسماء حقول مختلفة عن [toCacheJson]/
+  /// [fromCacheJson] (`grade` لا `educationGrade`, `university` لا
+  /// `universityName`, `education` لا `nonStudentEducation`,
+  /// `takafulBeneficiary`/`takafulAmount` لا `takafulKarama`/
+  /// `takafulKaramaAmount`). نقرأ `relationship` كبديل احتياطي لو اختلفت
+  /// تسمية الخادم (نفس احتياط `CasesRepository.refreshFamilyMembers`).
+  static FamilyMembersFormData fromApiResponse(Map<String, dynamic> json) {
+    final rawMembers = json['members'] as List? ?? const [];
+    return FamilyMembersFormData(
+      members: [
+        for (final m in rawMembers.whereType<Map<String, dynamic>>())
+          FamilyMemberFormData(
+            name: m['name'] as String? ?? '',
+            relation: (m['relation'] ?? m['relationship']) as String? ?? '',
+            nationalId: m['nationalId'] as String?,
+            age: m['age'] as int?,
+            gender: m['gender'] as String?,
+            isStudent: m['isStudent'] as bool? ?? false,
+            educationStage: m['educationStage'] as String?,
+            educationGrade: m['grade'] as String?,
+            universityName: m['university'] as String?,
+            nonStudentEducation: m['education'] as String?,
+            job: m['job'] as String?,
+            monthlyIncome: (m['monthlyIncome'] as num?)?.toDouble(),
+            takafulKarama: m['takafulBeneficiary'] as bool? ?? false,
+            takafulKaramaAmount: (m['takafulAmount'] as num?)?.toDouble(),
+            notes: m['notes'] as String?,
+          ),
+      ],
+    );
+  }
 }

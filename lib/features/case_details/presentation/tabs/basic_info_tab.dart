@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/providers/data_providers.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../case_search/domain/case_search_result.dart';
 import '../../../case_search/presentation/case_search_providers.dart';
+import '../../../reference/domain/reference_models.dart';
 import '../../domain/sections/basic_info_family_form.dart';
 import '../case_details_screen.dart';
 import '../widgets/editable_dropdown.dart';
@@ -47,37 +49,6 @@ const _socialInsuranceOptions = [
   'معاش تكافل وكرامة',
 ];
 
-const _governorates = [
-  'بني سويف',
-  'القاهرة',
-  'الإسكندرية',
-  'بورسعيد',
-  'السويس',
-  'دمياط',
-  'الدقهلية',
-  'الشرقية',
-  'القليوبية',
-  'كفر الشيخ',
-  'الغربية',
-  'المنوفية',
-  'البحيرة',
-  'الإسماعيلية',
-  'الجيزة',
-  'الفيوم',
-  'المنيا',
-  'أسيوط',
-  'سوهاج',
-  'قنا',
-  'أسوان',
-  'الأقصر',
-  'البحر الأحمر',
-  'الوادي الجديد',
-  'مطروح',
-  'شمال سيناء',
-  'جنوب سيناء',
-  'خارج الجمهورية',
-];
-
 const _headRelations = [
   'الأب',
   'الأم',
@@ -96,79 +67,264 @@ const _headRelations = [
 /// (web/src/data/beniSuefData.js — BENI_SUEF_DATA).
 const _beniSuefDistricts = <String, List<String>>{
   'بني سويف': [
-    'إبشنا', 'الحكامنة', 'الحلابية', 'الدوالطة', 'الدوية', 'الكوم الأحمر',
-    'أهناسيا الخضراء', 'إهوه', 'باروط', 'باها العجوز', 'بلفيا', 'بني بخيت',
-    'بني حمد', 'بني رضوان', 'بني سليمان الشرقية', 'بني عفان', 'بني هارون',
-    'بياض العرب', 'تزمنت الشرقية', 'تزمنت الغربية', 'حاجر بني سليمان', 'دموشيا',
-    'رياض', 'سنور', 'شريف', 'منشأة حيدر يكن', 'منشأة عاصم', 'منقريش',
-    'نزلة أبو سليم', 'نزلة السعادنة', 'نزلة معارك', 'نعيم', 'الزرابي', 'تل أبو ناروز',
+    'إبشنا',
+    'الحكامنة',
+    'الحلابية',
+    'الدوالطة',
+    'الدوية',
+    'الكوم الأحمر',
+    'أهناسيا الخضراء',
+    'إهوه',
+    'باروط',
+    'باها العجوز',
+    'بلفيا',
+    'بني بخيت',
+    'بني حمد',
+    'بني رضوان',
+    'بني سليمان الشرقية',
+    'بني عفان',
+    'بني هارون',
+    'بياض العرب',
+    'تزمنت الشرقية',
+    'تزمنت الغربية',
+    'حاجر بني سليمان',
+    'دموشيا',
+    'رياض',
+    'سنور',
+    'شريف',
+    'منشأة حيدر يكن',
+    'منشأة عاصم',
+    'منقريش',
+    'نزلة أبو سليم',
+    'نزلة السعادنة',
+    'نزلة معارك',
+    'نعيم',
+    'الزرابي',
+    'تل أبو ناروز',
   ],
   'الواسطى': [
-    'أبو صير الملق', 'أبويط', 'أطواب', 'أنفسط', 'إفوة', 'الحومة', 'الديابية',
-    'المصلوب', 'الميمون', 'النواميس', 'الهرم', 'بني حدير', 'بني سليمان',
-    'بني غنيم', 'بني محمد', 'بني نصير', 'جزيرة المساعدة', 'جزيرة النور',
-    'زاوية المصلوب', 'صفط الشرقية', 'صفط الغربية', 'عطف إفوة', 'قمن العروس',
-    'كفر أبجيج', 'كفر بني عثمان', 'كوم أبو راضي', 'كوم أدريجة', 'معصرة أبو صير',
-    'منشأة أبو صير', 'میدوم', 'نزلة الجنيدي', 'ونا القس',
+    'أبو صير الملق',
+    'أبويط',
+    'أطواب',
+    'أنفسط',
+    'إفوة',
+    'الحومة',
+    'الديابية',
+    'المصلوب',
+    'الميمون',
+    'النواميس',
+    'الهرم',
+    'بني حدير',
+    'بني سليمان',
+    'بني غنيم',
+    'بني محمد',
+    'بني نصير',
+    'جزيرة المساعدة',
+    'جزيرة النور',
+    'زاوية المصلوب',
+    'صفط الشرقية',
+    'صفط الغربية',
+    'عطف إفوة',
+    'قمن العروس',
+    'كفر أبجيج',
+    'كفر بني عثمان',
+    'كوم أبو راضي',
+    'كوم أدريجة',
+    'معصرة أبو صير',
+    'منشأة أبو صير',
+    'میدوم',
+    'نزلة الجنيدي',
+    'ونا القس',
   ],
   'ناصر': [
-    'أشمنت', 'البرج', 'الحرجة', 'الحمام', 'الرياض', 'الزيتون', 'المنصورة',
-    'بني خليفة', 'بني عدي', 'بهبشين', 'جزيرة أبو صالح', 'دلاص', 'دنديل',
-    'طحا بوش', 'طنسا الملق', 'غيط البحري', 'كفر الجزيرة', 'كوم أبو خلاد',
-    'منشأة الشركة', 'منشأة هديب',
+    'أشمنت',
+    'البرج',
+    'الحرجة',
+    'الحمام',
+    'الرياض',
+    'الزيتون',
+    'المنصورة',
+    'بني خليفة',
+    'بني عدي',
+    'بهبشين',
+    'جزيرة أبو صالح',
+    'دلاص',
+    'دنديل',
+    'طحا بوش',
+    'طنسا الملق',
+    'غيط البحري',
+    'كفر الجزيرة',
+    'كوم أبو خلاد',
+    'منشأة الشركة',
+    'منشأة هديب',
   ],
   'إهناسيا': [
-    'أدراسية', 'البهسمون', 'الشوبك', 'العواونة', 'المسيد الأبيض', 'النويرة',
-    'براوة الوقف', 'بني هاني', 'بهنموه', 'دير براوة', 'سدمنت الجبل', 'شرهي',
-    'طما فيوم', 'قاي', 'قلة', 'قلها', 'كفر أبو شهبة', 'كوم الرمل البحري',
-    'معصرة نعسان', 'منشأة الأمراء', 'منشأة البديني', 'منشأة الحاج', 'منشأة طاهر',
-    'منشأة عبد الصمد', 'منشأة كساب', 'منهرة', 'منهرو', 'منيل غيضان', 'منيل هاني',
-    'ميانة', 'نزلة المشارقة', 'نزلة المماليك', 'نزلة خلف', 'نزلة شاويش', 'ننا',
+    'أدراسية',
+    'البهسمون',
+    'الشوبك',
+    'العواونة',
+    'المسيد الأبيض',
+    'النويرة',
+    'براوة الوقف',
+    'بني هاني',
+    'بهنموه',
+    'دير براوة',
+    'سدمنت الجبل',
+    'شرهي',
+    'طما فيوم',
+    'قاي',
+    'قلة',
+    'قلها',
+    'كفر أبو شهبة',
+    'كوم الرمل البحري',
+    'معصرة نعسان',
+    'منشأة الأمراء',
+    'منشأة البديني',
+    'منشأة الحاج',
+    'منشأة طاهر',
+    'منشأة عبد الصمد',
+    'منشأة كساب',
+    'منهرة',
+    'منهرو',
+    'منيل غيضان',
+    'منيل هاني',
+    'ميانة',
+    'نزلة المشارقة',
+    'نزلة المماليك',
+    'نزلة خلف',
+    'نزلة شاويش',
+    'ننا',
   ],
   'ببا': [
-    'أبو شربان', 'أم الجنازير', 'البرانقة', 'البكرية', 'الجزيرة الشرقية',
-    'السلطاني', 'الشهيد حسن علام', 'الضباعنة', 'الفقاعي', 'الملاحية',
-    'الملاحية البحرية', 'بني أحمد', 'بني خليل', 'بني عقبة', 'بني عوض',
-    'بني قاسم', 'بني مؤمنة', 'بني ماضي', 'بني محمد الشرقية', 'بني هاشم',
-    'جبل النور', 'جزيرة الفقاعي', 'جزيرة ببا', 'رزقة المشارقة', 'زاوية الناوية',
-    'سدس الأمراء', 'صفط راشين', 'طحا لبيشة', 'طرشوب', 'طنسا بني مالو', 'طوة',
-    'غياضة الشرقية', 'غياضة الغربية', 'فزارة', 'قنبش الحمراء', 'كفر جمعة',
-    'كفر منصور', 'كفر ناصر', 'منشأة أبو دخان', 'منية الجيد', 'منيل موسى',
-    'نزلة الزاوية', 'نزلة الشريف', 'نزلة علي كيلاني', 'هربشنت', 'هلية',
+    'أبو شربان',
+    'أم الجنازير',
+    'البرانقة',
+    'البكرية',
+    'الجزيرة الشرقية',
+    'السلطاني',
+    'الشهيد حسن علام',
+    'الضباعنة',
+    'الفقاعي',
+    'الملاحية',
+    'الملاحية البحرية',
+    'بني أحمد',
+    'بني خليل',
+    'بني عقبة',
+    'بني عوض',
+    'بني قاسم',
+    'بني مؤمنة',
+    'بني ماضي',
+    'بني محمد الشرقية',
+    'بني هاشم',
+    'جبل النور',
+    'جزيرة الفقاعي',
+    'جزيرة ببا',
+    'رزقة المشارقة',
+    'زاوية الناوية',
+    'سدس الأمراء',
+    'صفط راشين',
+    'طحا لبيشة',
+    'طرشوب',
+    'طنسا بني مالو',
+    'طوة',
+    'غياضة الشرقية',
+    'غياضة الغربية',
+    'فزارة',
+    'قنبش الحمراء',
+    'كفر جمعة',
+    'كفر منصور',
+    'كفر ناصر',
+    'منشأة أبو دخان',
+    'منية الجيد',
+    'منيل موسى',
+    'نزلة الزاوية',
+    'نزلة الشريف',
+    'نزلة علي كيلاني',
+    'هربشنت',
+    'هلية',
   ],
   'سمسطا': [
-    'الشنطور', 'العساكرة', 'القصبة', 'المحمودية', 'بدهل', 'بني حلة',
-    'بني محمد راشد', 'دشاشة', 'دشطوط', 'سربو', 'عزبة الشنطور', 'عزبة قفطان',
-    'كفر الشيخ عابد', 'كفر بني علي', 'كوم الرمل القبلي', 'كوم النور', 'مزورة',
-    'منشأة أبو مليح', 'منشأة سليمان', 'نزلة الديب', 'نزلة سعيد',
+    'الشنطور',
+    'العساكرة',
+    'القصبة',
+    'المحمودية',
+    'بدهل',
+    'بني حلة',
+    'بني محمد راشد',
+    'دشاشة',
+    'دشطوط',
+    'سربو',
+    'عزبة الشنطور',
+    'عزبة قفطان',
+    'كفر الشيخ عابد',
+    'كفر بني علي',
+    'كوم الرمل القبلي',
+    'كوم النور',
+    'مزورة',
+    'منشأة أبو مليح',
+    'منشأة سليمان',
+    'نزلة الديب',
+    'نزلة سعيد',
   ],
   'الفشن': [
-    'أبسوج', 'أقفهص', 'البرقي', 'الجفادون', 'الجمهود', 'الحيبة',
-    'الزاوية الخضراء', 'الشقر', 'الفنت', 'الفنت الغربية', 'القضابي',
-    'القليعة', 'الكنيسة', 'بسفا', 'بني صالح', 'بني منين', 'تلت',
-    'جزيرة الوكلية', 'دلهانس', 'شنري', 'صالح', 'صفط الخرسة', 'صفط العرفا',
-    'صفط النور', 'طلا', 'عزبة البنك', 'عزبة تلت', 'كفر درويش', 'كفر منسابة',
-    'منشأة السادات', 'منشأة عمرو', 'نزلة أقفهص', 'نزلة البرقي', 'نزلة حنا حنا',
+    'أبسوج',
+    'أقفهص',
+    'البرقي',
+    'الجفادون',
+    'الجمهود',
+    'الحيبة',
+    'الزاوية الخضراء',
+    'الشقر',
+    'الفنت',
+    'الفنت الغربية',
+    'القضابي',
+    'القليعة',
+    'الكنيسة',
+    'بسفا',
+    'بني صالح',
+    'بني منين',
+    'تلت',
+    'جزيرة الوكلية',
+    'دلهانس',
+    'شنري',
+    'صالح',
+    'صفط الخرسة',
+    'صفط العرفا',
+    'صفط النور',
+    'طلا',
+    'عزبة البنك',
+    'عزبة تلت',
+    'كفر درويش',
+    'كفر منسابة',
+    'منشأة السادات',
+    'منشأة عمرو',
+    'نزلة أقفهص',
+    'نزلة البرقي',
+    'نزلة حنا حنا',
   ],
 };
-
-const _charities = [
-  'جمعية رسالة للأعمال الخيرية',
-  'مؤسسة مصر الخير',
-  'جمعية الأورمان',
-  'بنك الطعام المصري',
-];
 
 /// تاب البيانات الأساسية — مطابق لحقول صفحة البيانات الأساسية في الويب
 /// (web/index.html SECTION 1+2+3). أفراد الأسرة تاب مستقل (FamilyMembersTab).
 class BasicInfoTab extends ConsumerStatefulWidget {
+  /// `null` في شاشة إنشاء حالة جديدة (`create_case_screen.dart`) — الحالة
+  /// لسه مالهاش `id` على السيرفر، فلا يوجد مركز/قرية/جمعية مرتبطون بعد
+  /// (تلك الشاشة تعرض Dropdown مركز/قرية/جمعية منفصلًا لهذا الغرض بالذات).
+  final String? caseId;
   final BasicInfoFormData initialData;
   final ValueChanged<BasicInfoFormData> onChanged;
 
+  /// محتوى إضافي يُعرض في آخر نفس القائمة القابلة للتمرير — تستخدمه شاشة
+  /// إنشاء حالة جديدة (`caseId == null`) لعرض Dropdown مركز/قرية/جمعية بلا
+  /// اسكرول منفصل عن باقي حقول التاب.
+  final Widget? trailing;
+
   const BasicInfoTab({
     super.key,
+    this.caseId,
     required this.initialData,
     required this.onChanged,
+    this.trailing,
   });
 
   @override
@@ -192,7 +348,6 @@ class _BasicInfoTabState extends ConsumerState<BasicInfoTab> {
   late final _takafulKaramaAmountCtrl = TextEditingController(
     text: _data.takafulKaramaAmount?.toString() ?? '',
   );
-  late final _villageCtrl = TextEditingController(text: _data.village ?? '');
   late final _addressCtrl = TextEditingController(text: _data.address ?? '');
 
   Timer? _searchDebounce;
@@ -201,14 +356,133 @@ class _BasicInfoTabState extends ConsumerState<BasicInfoTab> {
   String? _nationalIdError;
   EgyptianNationalIdResult? _nationalIdResult;
 
-  List<String> get _referralVillageOptions =>
-      _beniSuefDistricts[_data.referralDistrict] ?? const [];
+  /// المركز/القرية قابلان للتعديل فعليًا على حالة موجودة (اتأكد من الباك
+  /// إند: `PUT /beneficiary` بيقبل `centerId`/`villageId`) — Dropdown حقيقي
+  /// بمعرّفات من `GET /locations`، زي شاشة إنشاء حالة جديدة بالظبط.
+  ///
+  /// الجمعية (`charityId`) قابلة للتعديل كمان عبر `PUT /cases/{id}/charity`
+  /// (endpoint منفصل، رد الباك إند بتاريخ 2026-09-26 — راجع
+  /// `CharityMapper`/`case_details_screen.dart._saveTab` case 0).
+  late bool _loadingReferral = widget.caseId != null;
+  List<LocationCenter> _centers = const [];
+  LocationCenter? _selectedCenter;
+  LocationVillage? _selectedVillage;
+  List<Charity> _charities = const [];
+  Charity? _selectedCharity;
 
   void _notify() => widget.onChanged(_data);
+
+  Future<void> _loadReferralInfo() async {
+    final caseId = widget.caseId;
+    // شاشة إنشاء حالة جديدة — _loadingReferral تبدأ false هناك.
+    if (caseId == null) return;
+
+    final cached = await ref
+        .read(casesRepositoryProvider)
+        .cachedDetails(caseId);
+    if (!mounted || cached == null) return;
+
+    final centerId = _data.centerId ?? cached.beneficiary.centerId;
+    final villageId = _data.villageId ?? cached.beneficiary.villageId;
+    final charityId = cached.charityId;
+
+    final centers = await ref.read(referenceRepositoryProvider).centers();
+
+    LocationCenter? selectedCenter;
+    LocationVillage? selectedVillage;
+    if (centerId != null && centerId.isNotEmpty) {
+      for (final center in centers) {
+        if (center.id == centerId) {
+          selectedCenter = center;
+          if (villageId != null && villageId.isNotEmpty) {
+            for (final village in center.villages) {
+              if (village.id == villageId) {
+                selectedVillage = village;
+                break;
+              }
+            }
+          }
+          break;
+        }
+      }
+    }
+
+    final charities = await ref.read(referenceRepositoryProvider).charities();
+    Charity? selectedCharity;
+    if (charityId != null && charityId.isNotEmpty) {
+      for (final charity in charities) {
+        if (charity.id == charityId) {
+          selectedCharity = charity;
+          break;
+        }
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _centers = centers;
+      _selectedCenter = selectedCenter;
+      _selectedVillage = selectedVillage;
+      _charities = charities;
+      _selectedCharity = selectedCharity;
+      // بيتاخد فقط لو الفورم لسه معندوش قيمة — ماينفعش يدهس تعديل المستخدم
+      // لو اختار جمعية قبل ما يخلص التحميل غير المتزامن ده.
+      _data.charityId ??= selectedCharity?.id;
+      _loadingReferral = false;
+    });
+  }
+
+  /// الجمعيات التابعة للمركز المختار حاليًا — نفس فكرة `center.villages`
+  /// بالظبط، لكن الجمعية (على عكس القرية) عنصر مستقل في `_charities` بحقل
+  /// `centerId` بدل تعشيش داخل `LocationCenter`، فالفلترة هنا محلية على
+  /// القائمة الكاملة المجلوبة أصلًا (بلا طلب شبكة إضافي لكل تغيير مركز).
+  List<Charity> get _charitiesForSelectedCenter {
+    final centerId = _selectedCenter?.id;
+    if (centerId == null) return const [];
+    return _charities.where((c) => c.centerId == centerId).toList();
+  }
+
+  void _onCenterChanged(LocationCenter? center) {
+    setState(() {
+      _selectedCenter = center;
+      _selectedVillage = null;
+      _data.centerId = center?.id;
+      _data.villageId = null;
+      // الجمعية تابعة للمركز زي القرية بالظبط — لو الجمعية الحالية مش تابعة
+      // للمركز الجديد (أو مفيش مركز أصلًا) لازم تتمسح، وإلا تفضل قيمة غير
+      // متسقة (جمعية من مركز تاني) محفوظة في الفورم.
+      final stillValid =
+          center != null &&
+          _selectedCharity != null &&
+          _selectedCharity!.centerId == center.id;
+      if (!stillValid) {
+        _selectedCharity = null;
+        _data.charityId = null;
+      }
+    });
+    _notify();
+  }
+
+  void _onVillageChanged(LocationVillage? village) {
+    setState(() {
+      _selectedVillage = village;
+      _data.villageId = village?.id;
+    });
+    _notify();
+  }
+
+  void _onCharityChanged(Charity? charity) {
+    setState(() {
+      _selectedCharity = charity;
+      _data.charityId = charity?.id;
+    });
+    _notify();
+  }
 
   @override
   void initState() {
     super.initState();
+    _loadReferralInfo();
     if (_data.nationalId.isNotEmpty) {
       final cleanDigits = _data.nationalId.replaceAll(RegExp(r'\s+|-'), '');
       if (cleanDigits.length == 14) {
@@ -298,6 +572,14 @@ class _BasicInfoTabState extends ConsumerState<BasicInfoTab> {
         return;
       }
 
+      // استبعاد الحالة الحالية نفسها من نتائج البحث — في وضع التعديل هي
+      // ستطابق بياناتها بالضرورة (نفس الاسم/الرقم القومي)، فتظهر كتكرار
+      // وهمي لنفسها بدل تكرار فعلي مع حالة أخرى.
+      final currentCaseId = widget.caseId;
+      if (currentCaseId != null) {
+        results = results.where((r) => r.id != currentCaseId).toList();
+      }
+
       if (mounted) {
         setState(() {
           _duplicateMatches = results;
@@ -318,7 +600,6 @@ class _BasicInfoTabState extends ConsumerState<BasicInfoTab> {
     _jobCtrl.dispose();
     _incomeCtrl.dispose();
     _takafulKaramaAmountCtrl.dispose();
-    _villageCtrl.dispose();
     _addressCtrl.dispose();
     super.dispose();
   }
@@ -392,21 +673,28 @@ class _BasicInfoTabState extends ConsumerState<BasicInfoTab> {
                       errorText: _nationalIdError,
                       onChanged: _processNationalId,
                     ),
-                    if (_nationalIdResult != null && _nationalIdResult!.valid) ...[
+                    if (_nationalIdResult != null &&
+                        _nationalIdResult!.valid) ...[
                       Container(
                         margin: const EdgeInsets.only(bottom: AppSpacing.lg),
                         padding: const EdgeInsets.all(AppSpacing.md),
                         decoration: BoxDecoration(
                           color: AppColors.primaryLight.withValues(alpha: 0.5),
                           borderRadius: BorderRadius.circular(AppRadius.input),
-                          border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+                          border: Border.all(
+                            color: AppColors.primary.withValues(alpha: 0.25),
+                          ),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Row(
                               children: [
-                                Icon(Icons.verified_user_outlined, size: 18, color: AppColors.primary),
+                                Icon(
+                                  Icons.verified_user_outlined,
+                                  size: 18,
+                                  color: AppColors.primary,
+                                ),
                                 SizedBox(width: 6),
                                 Text(
                                   'بيانات مستخرجة تلقائياً من الرقم القومي:',
@@ -422,10 +710,18 @@ class _BasicInfoTabState extends ConsumerState<BasicInfoTab> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceAround,
                               children: [
-                                _buildExtractedChip('العمر', '${_nationalIdResult!.age} سنة'),
-                                _buildExtractedChip('محافظة الميلاد', _nationalIdResult!.governorateAr!),
-                                _buildExtractedChip('النوع', _nationalIdResult!.genderAr!),
-                                _buildExtractedChip('الديانة', _data.religion ?? _nationalIdResult!.religionAr ?? 'مسلم'),
+                                _buildExtractedChip(
+                                  'العمر',
+                                  '${_nationalIdResult!.age} سنة',
+                                ),
+                                _buildExtractedChip(
+                                  'محافظة الميلاد',
+                                  _nationalIdResult!.governorateAr!,
+                                ),
+                                _buildExtractedChip(
+                                  'النوع',
+                                  _nationalIdResult!.genderAr!,
+                                ),
                               ],
                             ),
                           ],
@@ -501,50 +797,105 @@ class _BasicInfoTabState extends ConsumerState<BasicInfoTab> {
                   ],
                 ),
               ),
-              const SizedBox(height: AppSpacing.lg),
-              SectionCard(
-                title: 'الجمعية والنطاق الجغرافي',
-                child: Column(
-                  children: [
-                    EditableDropdown(
-                      label: 'المركز / المدينة',
-                      value: _data.referralDistrict,
-                      options: _beniSuefDistricts.keys.toList(),
-                      allowOther: false,
-                      onChanged: (v) {
-                        setState(() {
-                          _data.referralDistrict = v;
-                          _data.referralVillage = null;
-                        });
-                        _notify();
-                      },
-                    ),
-                    EditableDropdown(
-                      label: 'القرية / المنطقة',
-                      value: _data.referralVillage,
-                      options: _referralVillageOptions,
-                      allowOther: false,
-                      hintText: _data.referralDistrict == null
-                          ? 'اختر المركز أولاً...'
-                          : null,
-                      onChanged: (v) {
-                        setState(() => _data.referralVillage = v);
-                        _notify();
-                      },
-                    ),
-                    EditableDropdown(
-                      label: 'الجمعية',
-                      value: _data.charity,
-                      options: _charities,
-                      allowOther: true,
-                      onChanged: (v) {
-                        setState(() => _data.charity = v);
-                        _notify();
-                      },
-                    ),
-                  ],
+              // في شاشة إنشاء حالة جديدة (caseId == null) الكارت ده مالوش
+              // معنى — تلك الشاشة عندها Dropdown مركز/قرية/جمعية منفصل خصيصًا
+              // لهذا الغرض (راجع create_case_screen.dart)، ولسه معندهاش
+              // caseId تجيب بيه القيم المحفوظة أصلًا.
+              if (widget.caseId != null) ...[
+                const SizedBox(height: AppSpacing.lg),
+                SectionCard(
+                  title: 'الجمعية والنطاق الجغرافي',
+                  child: Column(
+                    children: [
+                      // المركز/القرية قابلان للتعديل فعليًا (اتأكد من الباك
+                      // إند)، فبقوا Dropdown حقيقي زي شاشة إنشاء حالة جديدة.
+                      if (_loadingReferral)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: AppSpacing.md),
+                          child: LinearProgressIndicator(minHeight: 2),
+                        )
+                      else ...[
+                        DropdownButtonFormField<LocationCenter>(
+                          key: ValueKey(('center', _selectedCenter?.id)),
+                          initialValue: _selectedCenter,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'المركز / المدينة',
+                          ),
+                          items: [
+                            for (final center in _centers)
+                              DropdownMenuItem(
+                                value: center,
+                                child: Text(center.name),
+                              ),
+                          ],
+                          onChanged: _onCenterChanged,
+                        ),
+                        const SizedBox(height: AppSpacing.md),
+                        DropdownButtonFormField<LocationVillage>(
+                          key: ValueKey(('village', _selectedVillage?.id)),
+                          initialValue: _selectedVillage,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            labelText: 'القرية / المنطقة',
+                            hintText: _selectedCenter == null
+                                ? 'اختر المركز أولًا'
+                                : null,
+                          ),
+                          items: [
+                            for (final village
+                                in _selectedCenter?.villages ?? const [])
+                              DropdownMenuItem(
+                                value: village,
+                                child: Text(village.name),
+                              ),
+                          ],
+                          onChanged: _selectedCenter == null
+                              ? null
+                              : _onVillageChanged,
+                        ),
+                        const SizedBox(height: AppSpacing.md),
+                        // الجمعية: PUT /cases/{id}/charity منفصل عن
+                        // beneficiary — يُرسَل من case_details_screen.dart
+                        // (_saveTab case 0) بـ caseRowVersion، فقط لو
+                        // charityId اتغيّر فعليًا (راجع CharityMapper).
+                        // معتمدة على المركز زي القرية بالظبط: معطّلة بلا
+                        // مركز مختار، والقائمة مفلترة بـ centerId.
+                        DropdownButtonFormField<Charity>(
+                          key: ValueKey(('charity', _selectedCharity?.id)),
+                          initialValue: _selectedCharity,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            labelText: 'الجمعية',
+                            hintText: _selectedCenter == null
+                                ? 'اختر المركز أولًا'
+                                : null,
+                          ),
+                          items: [
+                            for (final charity in _charitiesForSelectedCenter)
+                              DropdownMenuItem(
+                                value: charity,
+                                child: Text(charity.name),
+                              ),
+                          ],
+                          onChanged: _selectedCenter == null
+                              ? null
+                              : _onCharityChanged,
+                        ),
+                        const SizedBox(height: AppSpacing.md),
+                        EditableTextField(
+                          label: 'العنوان بالتفصيل',
+                          controller: _addressCtrl,
+                          onChanged: (v) {
+                            _data.address = v;
+                            _notify();
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
-              ),
+              ],
               const SizedBox(height: AppSpacing.lg),
               SectionCard(
                 title: '2. المعلومات الوظيفية والمالية',
@@ -626,51 +977,10 @@ class _BasicInfoTabState extends ConsumerState<BasicInfoTab> {
                   ],
                 ),
               ),
-              const SizedBox(height: AppSpacing.lg),
-              SectionCard(
-                title: '3. العنوان والموقع',
-                child: Column(
-                  children: [
-                    EditableDropdown(
-                      label: 'المحافظة',
-                      value: _data.governorate,
-                      options: _governorates,
-                      allowOther: false,
-                      onChanged: (v) {
-                        setState(() => _data.governorate = v ?? 'بني سويف');
-                        _notify();
-                      },
-                    ),
-                    EditableDropdown(
-                      label: 'المركز',
-                      value: _data.district,
-                      options: _beniSuefDistricts.keys.toList(),
-                      allowOther: true,
-                      onChanged: (v) {
-                        setState(() => _data.district = v);
-                        _notify();
-                      },
-                    ),
-                    EditableTextField(
-                      label: 'القرية',
-                      controller: _villageCtrl,
-                      onChanged: (v) {
-                        _data.village = v;
-                        _notify();
-                        setState(() {});
-                      },
-                    ),
-                    EditableTextField(
-                      label: 'العنوان بالتفصيل',
-                      controller: _addressCtrl,
-                      onChanged: (v) {
-                        _data.address = v;
-                        _notify();
-                      },
-                    ),
-                  ],
-                ),
-              ),
+              if (widget.trailing != null) ...[
+                const SizedBox(height: AppSpacing.md),
+                widget.trailing!,
+              ],
             ],
           ),
         ),
@@ -767,4 +1077,3 @@ class _DuplicateWarningCard extends StatelessWidget {
     );
   }
 }
-

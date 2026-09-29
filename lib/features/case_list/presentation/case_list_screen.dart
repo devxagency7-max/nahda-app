@@ -1,9 +1,6 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/providers/data_providers.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/widgets/app_background.dart';
@@ -38,17 +35,35 @@ class _CaseListScreenState extends ConsumerState<CaseListScreen>
     ...widget.data.submittedCases,
   ];
 
+  static const _submittedStatuses = {
+    CaseWorkStatus.submittedForReview,
+    CaseWorkStatus.pendingApproval,
+    CaseWorkStatus.approved,
+    CaseWorkStatus.rejected,
+  };
+
+  static const _savedStatuses = {
+    CaseWorkStatus.assigned,
+    CaseWorkStatus.inProgress,
+    CaseWorkStatus.visitScheduled,
+    CaseWorkStatus.readyForReview,
+  };
+
   List<SocialWorkerCase> _casesFor(CaseListFilter filter) {
     switch (filter) {
       case CaseListFilter.allCases:
-        return _allCases;
-      case CaseListFilter.saved:
+        // "كل حالاتي" = كل حالة اتبعتت فعليًا: عند المراجع، عند المدير،
+        // اتقبلت، أو اترفضت.
         return _allCases
-            .where((c) =>
-                c.hasUnsyncedChanges ||
-                c.status == CaseWorkStatus.inProgress ||
-                c.status == CaseWorkStatus.readyForReview)
+            .where((c) => _submittedStatuses.contains(c.status))
             .toList();
+      case CaseListFilter.saved:
+        // "الحالات المحفوظة" = الحالات المُسنَدة لهذا الأخصائي، تظهر هنا
+        // فور الإرسال إليه من الـ Data Entry (status == assigned)، بلا
+        // حاجة لأي فعل قبول من جانبه — بالإضافة إلى الحالات التي كلّف
+        // الأخصائي نفسه بها عبر زر "تكليف" (تتحول إلى in_research)، بنفس
+        // تعريف `CasesRepository.watchAssigned`.
+        return _allCases.where((c) => _savedStatuses.contains(c.status)).toList();
       case CaseListFilter.returned:
         return _allCases
             .where((c) => c.status == CaseWorkStatus.returnedFromReview)
@@ -70,33 +85,6 @@ class _CaseListScreenState extends ConsumerState<CaseListScreen>
   void dispose() {
     _tabController.dispose();
     super.dispose();
-  }
-
-  /// قبول حالة مباشرة من كارتها هنا — بنفس منطق شاشة "قبول الحالات"
-  /// ([CaseAcceptanceScreen._acceptCase]): كتابة محلية فورية + طابور مزامنة.
-  Future<void> _acceptCase(SocialWorkerCase item) async {
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      await ref.read(casesRepositoryProvider).acceptAssignment(item.id);
-      if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            'تم قبول واستلام حالة (${item.personName}) بنجاح وإضافتها لقائمة مهامك',
-          ),
-          backgroundColor: AppColors.success,
-        ),
-      );
-      unawaited(ref.read(runSyncProvider)());
-    } catch (_) {
-      if (!mounted) return;
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text('تعذّر حفظ القبول محليًا — حاول مرة أخرى'),
-          backgroundColor: AppColors.danger,
-        ),
-      );
-    }
   }
 
   @override
@@ -125,7 +113,7 @@ class _CaseListScreenState extends ConsumerState<CaseListScreen>
           controller: _tabController,
           children: [
             for (final filter in CaseListFilter.values)
-              _CaseListTab(cases: _casesFor(filter), onAccept: _acceptCase),
+              _CaseListTab(cases: _casesFor(filter)),
           ],
         ),
       ),
@@ -135,9 +123,8 @@ class _CaseListScreenState extends ConsumerState<CaseListScreen>
 
 class _CaseListTab extends StatelessWidget {
   final List<SocialWorkerCase> cases;
-  final ValueChanged<SocialWorkerCase> onAccept;
 
-  const _CaseListTab({required this.cases, required this.onAccept});
+  const _CaseListTab({required this.cases});
 
   @override
   Widget build(BuildContext context) {
@@ -157,13 +144,12 @@ class _CaseListTab extends StatelessWidget {
     return ListView.separated(
       padding: const EdgeInsets.all(AppSpacing.lg),
       itemCount: cases.length,
-      separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.md),
+      separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.md),
       itemBuilder: (context, index) {
         final item = cases[index];
         return CaseCard(
           caseItem: item,
           onTap: () => item.openDetails(context),
-          onAccept: () => onAccept(item),
         );
       },
     );

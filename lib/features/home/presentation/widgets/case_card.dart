@@ -3,8 +3,8 @@ import 'package:intl/intl.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
+import '../../../../core/widgets/case_status_badge.dart';
 import '../../../../core/widgets/glass_card.dart';
-import '../../../../core/widgets/priority_badge.dart';
 import '../../domain/social_worker_case.dart';
 
 /// كارت الحالة — Social Worker Spec §44 (Case Card).
@@ -12,20 +12,11 @@ class CaseCard extends StatelessWidget {
   final SocialWorkerCase caseItem;
   final VoidCallback onTap;
 
-  /// إن كانت الحالة لسه بانتظار قبول الأخصائي (`CaseWorkStatus.assigned`)
-  /// وتم تمرير هذا الـ callback، يظهر زرار "قبول واستلام الحالة" بدل شريط
-  /// التقدم — نفس الزرار الموجود في شاشة "قبول الحالات" بالظبط.
-  final VoidCallback? onAccept;
-
   const CaseCard({
     super.key,
     required this.caseItem,
     required this.onTap,
-    this.onAccept,
   });
-
-  bool get _isPendingAcceptance =>
-      onAccept != null && caseItem.status == CaseWorkStatus.assigned;
 
   String? get _visitLabel {
     final visitAt = caseItem.scheduledVisitAt;
@@ -53,14 +44,16 @@ class CaseCard extends StatelessWidget {
               Expanded(
                 child: Row(
                   children: [
-                    Text(
-                      caseItem.personName,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.textPrimary,
+                    Flexible(
+                      child: Text(
+                        caseItem.personName,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.textPrimary,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(width: 6),
                     Text(
@@ -74,7 +67,7 @@ class CaseCard extends StatelessWidget {
                   ],
                 ),
               ),
-              PriorityBadge(priority: caseItem.priority),
+              CaseStatusBadge(status: caseItem.status),
             ],
           ),
           const SizedBox(height: AppSpacing.md),
@@ -118,53 +111,33 @@ class CaseCard extends StatelessWidget {
               ],
             ],
           ),
-          if (_isPendingAcceptance) ...[
-            const SizedBox(height: AppSpacing.md),
-            ElevatedButton.icon(
-              onPressed: onAccept,
-              icon: const Icon(Icons.check_circle, size: 18),
-              label: const Text(
-                'قبول واستلام الحالة',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                minimumSize: const Size.fromHeight(44),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ] else ...[
-            const SizedBox(height: AppSpacing.md),
-            Row(
-              children: [
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(999),
-                    child: LinearProgressIndicator(
-                      value: caseItem.progress,
-                      minHeight: 6,
-                      backgroundColor: AppColors.surfaceMuted,
-                      valueColor: const AlwaysStoppedAnimation(AppColors.primary),
-                    ),
+          const SizedBox(height: AppSpacing.md),
+          Row(
+            children: [
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: caseItem.progress,
+                    minHeight: 6,
+                    backgroundColor: AppColors.surfaceMuted,
+                    valueColor: const AlwaysStoppedAnimation(AppColors.primary),
                   ),
                 ),
-                const SizedBox(width: AppSpacing.sm),
-                Text(
-                  '${(caseItem.progress * 100).round()}%',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.textMuted,
-                  ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Text(
+                '${(caseItem.progress * 100).round()}%',
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.textMuted,
                 ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            _SyncStatusRow(hasUnsyncedChanges: caseItem.hasUnsyncedChanges),
-          ],
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          _SyncStatusRow(hasUnsyncedChanges: caseItem.hasUnsyncedChanges),
         ],
       ),
     );

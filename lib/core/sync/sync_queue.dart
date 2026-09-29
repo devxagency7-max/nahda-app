@@ -14,9 +14,16 @@ const _uuid = Uuid();
 /// كل كتابة يقوم بها الأخصائي تمرّ من هنا. الـ repositories تكتب في Drift
 /// وتضيف عملية هنا؛ `SyncEngine` وحده يقرأ ويُفرّغ.
 class SyncQueueDao {
-  SyncQueueDao(this._db);
+  SyncQueueDao(this._db, {String? Function()? currentUserId})
+    : _currentUserId = currentUserId;
 
   final AppDatabase _db;
+
+  /// معرّف المستخدم الحالي وقت الاستدعاء — يُستخدَم لفلترة [readyOperations]
+  /// (راجع توثيقها). `null` (الافتراضي، ومُستخدَم في الاختبارات) يعني عدم
+  /// تطبيق أي فلترة — **لا يُستخدَم في مسار التطبيق الفعلي**؛
+  /// `syncQueueProvider` يمرّر دالة حقيقية دومًا.
+  final String? Function()? _currentUserId;
 
   /// يضيف عملية للطابور.
   ///
@@ -24,13 +31,19 @@ class SyncQueueDao {
   /// المزامنة يُدمجان في عملية واحدة. بدون هذا، التعديل الثاني سيحمل
   /// `rowVersion` أصبح قديمًا بفعل الأول، فيفشل بـ 409 حتميًا — تعارض نصنعه
   /// بأنفسنا لا تعارض حقيقي مع مستخدم آخر.
+  ///
+  /// يسجّل صاحب العملية تلقائيًا (`_currentUserId()` وقت الاستدعاء) — يمنع
+  /// `SyncEngine`/`background_sync.dart` من تنفيذها لاحقًا بهوية مستخدم
+  /// مختلف على نفس الجهاز (راجع [readyOperations]).
   Future<String> enqueue({
     required SyncOperationType type,
     required String caseId,
     required Map<String, dynamic> payload,
     int? rowVersion,
     String? dedupId,
+    String? idempotencyKey,
   }) async {
+    final userId = _currentUserId?.call();
     return _db.transaction(() async {
       if (type.isSectionUpdate) {
         final merged = await _tryMergeSectionUpdate(
@@ -62,11 +75,16 @@ class SyncQueueDao {
           sequence: await _nextSequence(caseId),
           payload: jsonEncode(payload),
           idempotencyKey: Value(
-            // يُولَّد مرة واحدة هنا ولا يتغيّر أبدًا بعدها (§15.3).
-            type.requiresIdempotencyKey ? _uuid.v4() : null,
+            // يُستخدَم المفتاح المُمرَّر إن وُجد — تولَّد لمحاولة إرسال فورية
+            // سبقت هذا الاستدعاء ([SyncEngine.trySendImmediately]) وفشلت،
+            // فيجب أن يصل الخادم بنفس المفتاح لا بمفتاح جديد (§15.3). وإلا
+            // يُولَّد هنا مرة واحدة ولا يتغيّر أبدًا بعدها.
+            idempotencyKey ??
+                (type.requiresIdempotencyKey ? _uuid.v4() : null),
           ),
           dedupId: Value(dedupId ?? (type.needsLocalDedup ? _uuid.v4() : null)),
           rowVersion: Value(rowVersion),
+          userId: Value(userId),
           createdAt: now,
           updatedAt: now,
         ),
@@ -130,14 +148,24 @@ class SyncQueueDao {
   /// العمليات الجاهزة للتفريغ، مرتّبة كما يفرضها العقد.
   ///
   /// الترتيب: الحالة (بأقدم عملية) ← الأولوية داخل الحالة ← تسلسل الإنشاء.
+  ///
+  /// **مفلترة بصاحب العملية** (AUTH_SESSION_AUDIT.md، مشكلة #4 CRITICAL):
+  /// لو `currentUserId` (الممرَّرة للـ constructor) تُرجع قيمة، تُستبعَد أي
+  /// عملية `userId` مختلف عنها — يمنع تنفيذ عملية حساب سابق بتوكن حساب
+  /// لاحق سجّل دخوله على نفس الجهاز. صفوف `userId == null` (منشأة قبل هذا
+  /// العمود) **تُستبعَد أيضًا** طالما هناك مستخدم حالي معروف — أضمن من
+  /// افتراض ملكيتها. لا فلترة إطلاقًا لو `currentUserId` نفسها `null`
+  /// (بيئة اختبار، أو لم تُمرَّر أصلًا).
   Future<List<SyncOperationRow>> readyOperations({int limit = 50}) {
     final now = DateTime.now();
+    final userId = _currentUserId?.call();
     return (_db.select(_db.syncQueue)
           ..where(
             (t) =>
                 t.status.isIn(['pending', 'failed']) &
                 (t.nextAttemptAt.isNull() |
-                    t.nextAttemptAt.isSmallerOrEqualValue(now)),
+                    t.nextAttemptAt.isSmallerOrEqualValue(now)) &
+                (userId == null ? const Constant(true) : t.userId.equals(userId)),
           )
           ..orderBy([
             (t) => OrderingTerm.asc(t.createdAt),
@@ -251,9 +279,18 @@ class SyncQueueDao {
             ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)]))
           .watch();
 
-  Stream<int> watchPendingCount() {
+  /// ما زال في طريقه للخادم فعلًا — بلا المتوقّف (`conflict`/`dead_lettered`)
+  /// الذي لن يُرسَل تلقائيًا أبدًا؛ عدّه هنا كان يُبقي شريط "جارٍ الرفع"
+  /// ظاهرًا للأبد رغم الاتصال.
+  Stream<int> watchPendingCount() => _watchCount(['pending', 'in_flight', 'failed']);
+
+  Stream<int> watchNeedingAttentionCount() =>
+      _watchCount(['conflict', 'dead_lettered']);
+
+  Stream<int> _watchCount(List<String> statuses) {
     final query = _db.selectOnly(_db.syncQueue)
-      ..addColumns([_db.syncQueue.id.count()]);
+      ..addColumns([_db.syncQueue.id.count()])
+      ..where(_db.syncQueue.status.isIn(statuses));
     return query
         .watchSingle()
         .map((row) => row.read(_db.syncQueue.id.count()) ?? 0);

@@ -9,7 +9,7 @@ import '../widgets/section_card.dart';
 import '../widgets/tab_progress_bar.dart';
 
 const _priorityLevels = ['low', 'medium', 'high'];
-const _sources = ['confirmed_from_initial', 'new_from_field_visit'];
+const _sources = ['confirmed_from_initial'];
 const _statuses = ['pending', 'approved'];
 
 /// تاب الاحتياجات المُقيَّمة (القسم 17) — أُضيف في المرحلة ٣ لتغطية قسم

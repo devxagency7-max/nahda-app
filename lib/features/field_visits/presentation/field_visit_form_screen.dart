@@ -169,7 +169,7 @@ class _FieldVisitFormScreenState extends ConsumerState<FieldVisitFormScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('تعذّرت إضافة الصورة: $e'),
+          content: Text('معلش، مقدرناش نضيف الصورة: $e'),
           backgroundColor: AppColors.danger,
         ),
       );
@@ -184,7 +184,7 @@ class _FieldVisitFormScreenState extends ConsumerState<FieldVisitFormScreen> {
     if (!_isValid) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('نتيجة الزيارة حقل إلزامي.'),
+          content: Text('لازم تكتب نتيجة الزيارة قبل الحفظ.'),
           backgroundColor: AppColors.danger,
         ),
       );
@@ -216,7 +216,7 @@ class _FieldVisitFormScreenState extends ConsumerState<FieldVisitFormScreen> {
         case VisitSubmitted():
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('تم إرسال الزيارة للخادم بنجاح.'),
+              content: Text('تمام! الزيارة اتبعتت بنجاح.'),
               backgroundColor: AppColors.success,
             ),
           );
@@ -224,7 +224,7 @@ class _FieldVisitFormScreenState extends ConsumerState<FieldVisitFormScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
-                'حُفظت الزيارة محليًا — ستُرسَل تلقائيًا عند توفر الاتصال.',
+                'حفظنا الزيارة على جهازك — هتتبعت لوحدها أول ما النت يرجع.',
               ),
               backgroundColor: AppColors.warning,
             ),
@@ -232,7 +232,7 @@ class _FieldVisitFormScreenState extends ConsumerState<FieldVisitFormScreen> {
         case VisitFailed(:final error):
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('تعذّر إرسال الزيارة: ${error.displayMessage}'),
+              content: Text('معلش، مقدرناش نبعت الزيارة: ${error.displayMessage}'),
               backgroundColor: AppColors.danger,
             ),
           );

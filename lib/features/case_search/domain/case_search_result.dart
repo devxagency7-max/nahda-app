@@ -1,3 +1,4 @@
+import '../../cases/domain/case_status.dart';
 import '../../home/domain/case_priority.dart';
 
 /// نتيجة بحث عن حالة في كل حالات النظام (مش مقتصر على حالات الأخصائي) —
@@ -13,6 +14,11 @@ class CaseSearchResult {
   final String? phone;
   final DateTime? registeredAt;
   final String statusLabel;
+
+  /// الحالة الفعلية (لا `statusLabel` النصي) — تُستخدم لإظهار زر "تكليف"
+  /// حين تكون `pendingAssignment` دون تفسير نص العرض.
+  final CaseStatus status;
+
   final CasePriority priority;
   final String? assignedWorkerName;
 
@@ -31,6 +37,7 @@ class CaseSearchResult {
     this.phone,
     this.registeredAt,
     required this.statusLabel,
+    required this.status,
     required this.priority,
     this.assignedWorkerName,
     this.isAssignedToCurrentWorker,

@@ -1,15 +1,24 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../network/api_client.dart';
+import '../network/network_status_service.dart';
+import '../session/session_registry.dart';
 import '../storage/app_database.dart';
 import '../storage/secure_token_store.dart';
-import '../sync/connectivity_monitor.dart';
 import '../sync/sync_queue.dart';
 
 /// مزوّدات البنية التحتية المشتركة.
 
 final tokenStoreProvider = Provider<SecureTokenStore>((ref) {
   return SecureTokenStore();
+});
+
+/// مصدر الحقيقة الوحيد لهوية الجلسة الحالية (راجع [SessionRegistry]) —
+/// `Provider` عادي (لا `autoDispose`) لأنه، مثل `tokenStoreProvider`، يجب أن
+/// يبقى نفس الـ instance طوال عمر التطبيق كي يبقى العدّاد ذا معنى عبر كل
+/// دورات login/logout.
+final sessionRegistryProvider = Provider<SessionRegistry>((ref) {
+  return SessionRegistry();
 });
 
 final appDatabaseProvider = Provider<AppDatabase>((ref) {
@@ -19,13 +28,27 @@ final appDatabaseProvider = Provider<AppDatabase>((ref) {
 });
 
 final syncQueueProvider = Provider<SyncQueueDao>((ref) {
-  return SyncQueueDao(ref.watch(appDatabaseProvider));
+  final session = ref.watch(sessionRegistryProvider);
+  return SyncQueueDao(
+    ref.watch(appDatabaseProvider),
+    currentUserId: () => session.userId,
+  );
 });
 
-final connectivityProvider = Provider<ConnectivityMonitor>((ref) {
-  final monitor = ConnectivityMonitor();
-  ref.onDispose(monitor.dispose);
-  return monitor;
+/// المراقب المركزي الوحيد لحالة الاتصال (Internet + Backend reachability) —
+/// يحلّ محل `ConnectivityMonitor` القديم عبر كل مزوّدات/مستودعات التطبيق.
+final networkStatusServiceProvider = Provider<NetworkStatusService>((ref) {
+  final service = NetworkStatusService();
+  ref.onDispose(service.dispose);
+  return service;
+});
+
+/// حالة الاتصال المركزية — `StreamProvider` يبدأ المراقبة عند أول قراءة.
+final networkStatusProvider = StreamProvider<NetworkStatus>((ref) async* {
+  final service = ref.watch(networkStatusServiceProvider);
+  await service.start();
+  yield service.current;
+  yield* service.statusStream;
 });
 
 /// إشارة انتهاء الجلسة — يرفعها `AuthInterceptor` حين يرفض الخادم التوكن.
@@ -37,21 +60,19 @@ final sessionExpiredProvider = StateProvider<int>((ref) => 0);
 final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient.create(
     tokenStore: ref.watch(tokenStoreProvider),
+    session: ref.watch(sessionRegistryProvider),
     onSessionExpired: () async {
       ref.read(sessionExpiredProvider.notifier).state++;
     },
   );
 });
 
-/// حالة الاتصال الحالية — تُستخدم لعرض شارة "بدون اتصال".
-final connectionKindProvider = StreamProvider<ConnectionKind>((ref) async* {
-  final monitor = ref.watch(connectivityProvider);
-  await monitor.start();
-  yield monitor.current;
-  yield* monitor.changes;
-});
-
 /// عدد العمليات المعلّقة — يغذّي شارة المزامنة وتحذير الخروج.
 final pendingSyncCountProvider = StreamProvider<int>((ref) {
   return ref.watch(syncQueueProvider).watchPendingCount();
+});
+
+/// عمليات رفضها الخادم أو تعارضت — تحتاج قرار المستخدم في شاشة المزامنة.
+final syncNeedsAttentionCountProvider = StreamProvider<int>((ref) {
+  return ref.watch(syncQueueProvider).watchNeedingAttentionCount();
 });

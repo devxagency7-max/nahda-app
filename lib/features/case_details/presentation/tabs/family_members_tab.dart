@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/providers/data_providers.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/utils/egyptian_national_id_parser.dart';
 import '../../../../core/utils/localized_number_parser.dart';
 import '../../domain/sections/basic_info_family_form.dart';
+import '../../domain/sections/support_section.dart';
 import '../widgets/editable_dropdown.dart';
 import '../widgets/editable_text_field.dart';
 import '../widgets/section_card.dart';
@@ -71,26 +74,67 @@ const Map<String, List<String>> _gradeOptionsForStage = {
 
 /// تاب الأفراد التابعين للأسرة — مستقل بذاته (SECTION 4 في الويب)،
 /// مطابق لفورم "إضافة فرد" هناك بالكامل.
-class FamilyMembersTab extends StatefulWidget {
+class FamilyMembersTab extends ConsumerStatefulWidget {
+  /// `null` في شاشة إنشاء حالة جديدة — لا `caseId` بعد فتُخفى بطاقة "الدعم
+  /// المصروف له" (لا يوجد سجل دعم لحالة لم تُنشأ على السيرفر أصلًا).
+  final String? caseId;
   final FamilyMembersFormData initialData;
   final ValueChanged<FamilyMembersFormData> onChanged;
 
   const FamilyMembersTab({
     super.key,
+    this.caseId,
     required this.initialData,
     required this.onChanged,
   });
 
   @override
-  State<FamilyMembersTab> createState() => _FamilyMembersTabState();
+  ConsumerState<FamilyMembersTab> createState() => _FamilyMembersTabState();
 }
 
-class _FamilyMembersTabState extends State<FamilyMembersTab> {
+class _FamilyMembersTabState extends ConsumerState<FamilyMembersTab> {
   late final FamilyMembersFormData _data = widget.initialData;
   bool _showAddMemberForm = false;
   int? _editingIndex;
 
+  /// سجل الدعم المصروف فعليًا — للعرض فقط جنب كل فرد (راجع
+  /// `SupportHistoryEntry`). المطابقة بالاسم لا بمعرّف (العقد لا يوفّر
+  /// `familyMemberId` في `history[]`).
+  List<SupportHistoryEntry> _supportHistory = const [];
+
   void _notify() => widget.onChanged(_data);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSupportHistory();
+  }
+
+  Future<void> _loadSupportHistory() async {
+    final caseId = widget.caseId;
+    if (caseId == null) return;
+    try {
+      final history = await ref
+          .read(casesRepositoryProvider)
+          .supportHistory(caseId);
+      if (!mounted) return;
+      setState(() => _supportHistory = history);
+    } catch (_) {
+      // عرض إضافي بلا أثر على الحفظ — فشل الشبكة (أوفلاين مثلًا) يعني فقط
+      // عدم ظهور سجل الدعم القديم، بلا رسالة خطأ مزعجة لشاشة تعديل بيانات.
+    }
+  }
+
+  List<SupportHistoryEntry> _historyFor(String memberName) {
+    if (memberName.trim().isEmpty) return const [];
+    return _supportHistory
+        .where(
+          (e) =>
+              e.recipientType == 'family_member' &&
+              e.recipientName.trim() == memberName.trim(),
+        )
+        .toList(growable: false);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -168,6 +212,7 @@ class _FamilyMembersTabState extends State<FamilyMembersTab> {
                       for (int i = 0; i < _data.members.length; i++) ...[
                         if (_editingIndex == i) ...[
                           _AddFamilyMemberForm(
+                            key: ValueKey('edit-${_data.members[i].id}'),
                             initialMember: _data.members[i],
                             onSave: (updated) {
                               setState(() {
@@ -182,7 +227,9 @@ class _FamilyMembersTabState extends State<FamilyMembersTab> {
                           const SizedBox(height: AppSpacing.sm),
                         ] else ...[
                           _FamilyMemberTile(
+                            key: ValueKey(_data.members[i].id),
                             member: _data.members[i],
+                            supportHistory: _historyFor(_data.members[i].name),
                             onEdit: () => setState(() {
                               _showAddMemberForm = false;
                               _editingIndex = i;
@@ -208,11 +255,16 @@ class _FamilyMembersTabState extends State<FamilyMembersTab> {
 
 class _FamilyMemberTile extends StatelessWidget {
   final FamilyMemberFormData member;
+
+  /// للعرض فقط — راجع `_FamilyMembersTabState._historyFor`.
+  final List<SupportHistoryEntry> supportHistory;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   const _FamilyMemberTile({
+    super.key,
     required this.member,
+    this.supportHistory = const [],
     required this.onEdit,
     required this.onDelete,
   });
@@ -288,6 +340,43 @@ class _FamilyMemberTile extends StatelessWidget {
                 ),
               if (member.notes != null && member.notes!.isNotEmpty)
                 _buildDetailRow('ملاحظات', member.notes!),
+              if (supportHistory.isNotEmpty) ...[
+                const Divider(),
+                const Text(
+                  'الدعم المصروف له (للعرض فقط)',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                for (final entry in supportHistory)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            entry.quantity > 1
+                                ? '${entry.supportType} ×${entry.quantity}'
+                                : entry.supportType,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ),
+                        if (entry.amount != null)
+                          Text(
+                            '${entry.amount} جنيه',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
             ],
           ),
         ),
@@ -408,6 +497,22 @@ class _FamilyMemberTile extends StatelessWidget {
                           ),
                         ),
                       ],
+                      if (supportHistory.isNotEmpty) ...[
+                        const Text('·', style: TextStyle(color: AppColors.textMuted)),
+                        const Icon(
+                          Icons.volunteer_activism_outlined,
+                          size: 13,
+                          color: AppColors.success,
+                        ),
+                        Text(
+                          'دعم سابق (${supportHistory.length})',
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.success,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ],
@@ -442,6 +547,7 @@ class _AddFamilyMemberForm extends StatefulWidget {
   final VoidCallback onCancel;
 
   const _AddFamilyMemberForm({
+    super.key,
     this.initialMember,
     required this.onSave,
     required this.onCancel,

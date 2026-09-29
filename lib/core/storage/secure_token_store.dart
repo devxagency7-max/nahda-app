@@ -145,4 +145,24 @@ class SecureTokenStore {
 
   Future<void> writeUser(Map<String, dynamic> user) =>
       _storage.write(key: _userKey, value: jsonEncode(user));
+
+  /// هل تفريغ طابور المزامنة ممكن الآن؟
+  ///
+  /// **لا يُجدّد التوكن هنا** — `AuthInterceptor` يتولّى ذلك شفافيًا مع أول
+  /// طلب فعلي. الفحص هنا أضيق: هل الـ refresh token نفسه ما زال حيًّا؟
+  /// طابور تراكم على مدى أيام (§14.4) قد يجد الـ refresh token منتهيًا
+  /// (٧ أيام) رغم أن آخر access token كان صالحًا وقت الإغلاق — عندها لا
+  /// فائدة من إرسال أي عملية: أول طلب سيفشل بـ `401` نهائي ويستهلك محاولة
+  /// من كل عملية في الطابور بلا طائل. أفضل أن يتوقف `SyncEngine` هنا مرة
+  /// واحدة قبل البدء ويطلب دخولًا جديدًا.
+  ///
+  /// معرَّفة هنا لا في `AuthRepository` عمدًا — `SyncEngine` يحتاجها ضمن
+  /// `syncEngineProvider`، الذي تعتمد عليه `AuthRepository.endSession` نفسها
+  /// (`awaitSyncIdle`)؛ إبقاؤها في `AuthRepository` كان يُنشئ اعتمادًا
+  /// دائريًا بين `authRepositoryProvider` و`syncEngineProvider`.
+  Future<bool> canFlushSyncQueue() async {
+    final session = await read();
+    if (session == null) return false;
+    return !session.isRefreshTokenExpired;
+  }
 }

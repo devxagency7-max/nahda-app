@@ -116,6 +116,16 @@ class BeneficiaryDto {
     this.centerId,
     this.villageId,
     required this.rowVersion,
+    this.religion,
+    this.education,
+    this.maritalStatus,
+    this.healthStatus,
+    this.employmentStatus,
+    this.job,
+    this.monthlyIncome,
+    this.takafulBeneficiary,
+    this.takafulAmount,
+    this.headRelation,
   });
 
   final String fullName;
@@ -139,6 +149,21 @@ class BeneficiaryDto {
   /// نجعلها nullable هنا فقط لتحمّل استجابة ناقصة دون انهيار.
   final int? rowVersion;
 
+  // الحقول العشرة دي كانت ناقصة من رد GET /cases/{id} (بلّغنا الباك إند
+  // بالمشكلة، واتصلحت وترفعت على الإنتاج — commit bcc9d61 بتاريخ 2026-09-25).
+  // موجودة كلها في PUT /beneficiary من الأساس، لكن مكناش بنقراها من رد الـ
+  // GET فكانت بتفضل فاضية في الفورم حتى لو متسجّلة فعليًا على السيرفر.
+  final String? religion;
+  final String? education;
+  final String? maritalStatus;
+  final String? healthStatus;
+  final String? employmentStatus;
+  final String? job;
+  final double? monthlyIncome;
+  final bool? takafulBeneficiary;
+  final double? takafulAmount;
+  final String? headRelation;
+
   static BeneficiaryDto fromJson(Object? data) {
     final json = data is Map<String, dynamic> ? data : const <String, dynamic>{};
     return BeneficiaryDto(
@@ -153,8 +178,26 @@ class BeneficiaryDto {
       centerId: json['centerId'] as String?,
       villageId: json['villageId'] as String?,
       rowVersion: CaseDetailsDto._int(json['rowVersion']),
+      religion: json['religion'] as String?,
+      education: json['education'] as String?,
+      maritalStatus: json['maritalStatus'] as String?,
+      healthStatus: json['healthStatus'] as String?,
+      employmentStatus: json['employmentStatus'] as String?,
+      job: json['job'] as String?,
+      monthlyIncome: _nullableDouble(json['monthlyIncome']),
+      takafulBeneficiary: json['takafulBeneficiary'] as bool?,
+      takafulAmount: _nullableDouble(json['takafulAmount']),
+      headRelation: json['headRelation'] as String?,
     );
   }
+
+  /// زي `CaseDetailsDto._double` لكن بيحافظ على null بدل ما يحوّلها لصفر —
+  /// مهم هنا لأن monthlyIncome/takafulAmount غير المسجّلة (null فعليًا على
+  /// الخادم) لازم تفضل null، مش صفر (صفر معناها "الدخل صفر فعليًا" وده معنى مختلف تمامًا).
+  static double? _nullableDouble(Object? v) => switch (v) {
+    final num n => n.toDouble(),
+    _ => null,
+  };
 }
 
 /// معلومات الإرجاع — **مطلوبة من الباك إند، غير موجودة بعد** (§7، طلب 1).

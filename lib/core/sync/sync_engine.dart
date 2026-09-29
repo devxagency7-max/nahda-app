@@ -3,8 +3,10 @@ import 'dart:async';
 import '../../features/cases/data/cases_api.dart';
 import '../../features/cases/data/workflow_api.dart';
 import '../../features/notifications/data/notifications_api.dart';
+import '../logging/app_logger.dart';
 import '../network/api_error_code.dart';
 import '../network/api_exception.dart';
+import '../network/network_status_service.dart';
 import '../storage/app_database.dart' show SyncOperationRow;
 import 'sync_operation.dart';
 import 'sync_queue.dart';
@@ -64,15 +66,25 @@ class SyncEngine {
     CasesApi? casesApi,
     WorkflowApi? workflowApi,
     NotificationsApi? notificationsApi,
+    NetworkStatusService? networkStatus,
   }) : _queue = queue,
        _ensureFreshSession = ensureFreshSession,
        _uploadAttachmentsForCase = uploadAttachmentsForCase,
        _submitPendingVisitsForCase = submitPendingVisitsForCase,
        _casesApi = casesApi,
        _workflowApi = workflowApi,
-       _notificationsApi = notificationsApi;
+       _notificationsApi = notificationsApi,
+       _networkStatus = networkStatus;
 
   final SyncQueueDao _queue;
+
+  /// `null` فقط في اختبارات لا تحتاج تمييز أونلاين/أوفلاين قبل الإرسال
+  /// الفوري — عندها [trySendImmediately] يحاول دائمًا (راجع توثيقها).
+  ///
+  /// **حاسم:** يعتمد على [NetworkStatusService] لا `ConnectivityMonitor`
+  /// الخام — الحالة المركزية الموحّدة (Internet+Backend) هي التي تقرر هنا،
+  /// لا فحص واجهة شبكة بسيط قد يكذب في بوابة مقيّدة.
+  final NetworkStatusService? _networkStatus;
 
   /// يتحقق من صلاحية التوكن ويُجدّده عند الحاجة، ويرجع `false` إن تعذّر ذلك
   /// (الجلسة تحتاج دخولًا جديدًا) — يُمرَّر من الخارج بدل أن يعتمد هذا الصنف
@@ -94,9 +106,22 @@ class SyncEngine {
 
   bool _isFlushing = false;
 
+  /// من ينتظر حاليًا نهاية دورة التفريغ الجارية — راجع [awaitIdle].
+  Completer<void>? _idleWaiters;
+
   /// هل هناك دورة تفريغ قيد التنفيذ الآن؟ لمنع إطلاق دورتين متزامنتين —
   /// تفريغان متوازيان لنفس العملية يعنيان تنفيذًا مزدوجًا محتملًا.
   bool get isFlushing => _isFlushing;
+
+  /// ينتظر فعليًا (لا يرجع فورًا) حتى تنتهي أي دورة تفريغ جارية الآن، أو
+  /// يرجع فورًا لو لا دورة جارية أصلًا. يُستخدم من `AuthRepository.endSession`
+  /// قبل `AppDatabase.clearAll` — يمنع حذف صفّ طابور بينما `_executeOne`
+  /// يكتب عليه (`markSucceeded`/`markFailed`) في نفس اللحظة
+  /// (AUTH_SESSION_AUDIT.md §2، مشكلة #8).
+  Future<void> awaitIdle() {
+    if (!_isFlushing) return Future.value();
+    return (_idleWaiters ??= Completer<void>()).future;
+  }
 
   /// نقطة الدخول الوحيدة. آمنة للاستدعاء من عدة محفّزات في آن واحد (عودة
   /// الاتصال، استئناف التطبيق، زر "زامن الآن") — القفل يجعل الثانية تنتظر.
@@ -105,9 +130,14 @@ class SyncEngine {
     _isFlushing = true;
 
     try {
-      return await _flushLocked();
+      final result = await _flushLocked();
+      final remaining = await _queue.watchPendingCount().first;
+      AppLogger.sync('Pending operations: $remaining');
+      return result;
     } finally {
       _isFlushing = false;
+      _idleWaiters?.complete();
+      _idleWaiters = null;
     }
   }
 
@@ -252,6 +282,10 @@ class SyncEngine {
           ? _Outcome.conflicted
           : _Outcome.failed;
     }
+    // ملاحظة: لا حاجة لمعالجة "جلسة منتهية" هنا — `ApiClient._send` يُعلّق
+    // الـ `Future` بلا اكتمال في هذه الحالة بدل رمي استثناء (راجع توثيقها)،
+    // فـ `await _dispatch(...)` أعلاه لا يعود أصلًا؛ الصفّ يبقى `in_flight`
+    // بأمان ليُعاد تأهيله في أول تفريغ تالٍ لجلسة صحيحة.
   }
 
   /// هل يملك هذا النوع اليوم دالة شبكة فعلية يستدعيها [_dispatch]؟
@@ -274,6 +308,7 @@ class SyncEngine {
     SyncOperationType.updateInitialNeeds ||
     SyncOperationType.updateClassification ||
     SyncOperationType.updateAssessedNeeds ||
+    SyncOperationType.updateCharity ||
     SyncOperationType.acceptCase ||
     SyncOperationType.rejectAssignment ||
     SyncOperationType.submitWorkerOpinion ||
@@ -286,61 +321,137 @@ class SyncEngine {
   ///
   /// يُستدعى بعد أن يتأكد [_executeOne] من [_isWired] — الأنواع غير
   /// المدعومة لا تصل هنا إطلاقًا، فلا حاجة لحالة "افتراضي" ترمي خطأ.
-  Future<void> _dispatch(SyncOperationRow op, SyncOperationType type) async {
-    final payload = _queue.decodePayload(op);
+  Future<void> _dispatch(SyncOperationRow op, SyncOperationType type) =>
+      _dispatchRaw(
+        type: type,
+        caseId: op.caseId,
+        payload: _queue.decodePayload(op),
+        idempotencyKey: op.idempotencyKey,
+      );
 
+  /// نفس توجيه [_dispatch] لكن على قيم خام لا على صفّ طابور مخزَّن — يخدم
+  /// [trySendImmediately] الذي يرسل **قبل** أي كتابة في `sync_queue` أصلًا.
+  Future<void> _dispatchRaw({
+    required SyncOperationType type,
+    required String caseId,
+    required Map<String, dynamic> payload,
+    String? idempotencyKey,
+  }) async {
     switch (type) {
       case SyncOperationType.bookmarkCase:
-        await _requireCasesApi().addBookmark(op.caseId);
+        await _requireCasesApi().addBookmark(caseId);
       case SyncOperationType.unbookmarkCase:
-        await _requireCasesApi().removeBookmark(op.caseId);
+        await _requireCasesApi().removeBookmark(caseId);
       case SyncOperationType.updateBeneficiary:
-        await _requireCasesApi().updateBeneficiary(op.caseId, payload);
+        await _requireCasesApi().updateBeneficiary(caseId, payload);
       case SyncOperationType.updateFamilyMembers:
-        await _requireCasesApi().updateFamilyMembers(op.caseId, payload);
+        await _requireCasesApi().updateFamilyMembers(caseId, payload);
       case SyncOperationType.updateHousing:
-        await _requireCasesApi().updateHousing(op.caseId, payload);
+        await _requireCasesApi().updateHousing(caseId, payload);
       case SyncOperationType.updateUtilities:
-        await _requireCasesApi().updateUtilities(op.caseId, payload);
+        await _requireCasesApi().updateUtilities(caseId, payload);
       case SyncOperationType.updateAgriculture:
-        await _requireCasesApi().updateAgriculture(op.caseId, payload);
+        await _requireCasesApi().updateAgriculture(caseId, payload);
       case SyncOperationType.updateFinancial:
-        await _requireCasesApi().updateFinancial(op.caseId, payload);
+        await _requireCasesApi().updateFinancial(caseId, payload);
       case SyncOperationType.updateInitialNeeds:
-        await _requireCasesApi().updateInitialNeeds(op.caseId, payload);
+        await _requireCasesApi().updateInitialNeeds(caseId, payload);
       case SyncOperationType.updateClassification:
-        await _requireCasesApi().updateClassification(op.caseId, payload);
+        await _requireCasesApi().updateClassification(caseId, payload);
       case SyncOperationType.updateAssessedNeeds:
-        await _requireCasesApi().updateAssessedNeeds(op.caseId, payload);
+        await _requireCasesApi().updateAssessedNeeds(caseId, payload);
+      case SyncOperationType.updateCharity:
+        await _requireCasesApi().updateCharity(caseId, payload);
       case SyncOperationType.acceptCase:
         await _requireWorkflowApi().accept(
-          op.caseId,
+          caseId,
           payload,
-          idempotencyKey: _requireIdempotencyKey(op),
+          idempotencyKey: _requireKey(idempotencyKey),
         );
       case SyncOperationType.rejectAssignment:
         await _requireWorkflowApi().rejectAssignment(
-          op.caseId,
+          caseId,
           payload,
-          idempotencyKey: _requireIdempotencyKey(op),
+          idempotencyKey: _requireKey(idempotencyKey),
         );
       case SyncOperationType.submitWorkerOpinion:
         await _requireWorkflowApi().submitWorkerOpinion(
-          op.caseId,
+          caseId,
           payload,
-          idempotencyKey: _requireIdempotencyKey(op),
+          idempotencyKey: _requireKey(idempotencyKey),
         );
       case SyncOperationType.markNotificationRead:
-        // `op.caseId` هنا معرّف الإشعار نفسه، لا حالة — راجع
+        // `caseId` هنا معرّف الإشعار نفسه، لا حالة — راجع
         // `NotificationsRepository.markRead` (لا caseId حقيقي لعملية إشعار).
-        await _requireNotificationsApi().markRead(op.caseId);
+        await _requireNotificationsApi().markRead(caseId);
       case SyncOperationType.markAllNotificationsRead:
         await _requireNotificationsApi().markAllRead();
       default:
-        // لا يُصَل إليه أبدًا بفضل حارس [_isWired] في [_executeOne] —
-        // موجود فقط ليبقى `switch` شاملًا دون تكرار كل الحالات هنا.
+        // لا يُصَل إليه أبدًا بفضل حارس [_isWired] في [_executeOne]/
+        // [trySendImmediately] — موجود فقط ليبقى `switch` شاملًا دون تكرار
+        // كل الحالات هنا.
         throw StateError('نوع غير موجّه: ${type.wireValue}');
     }
+  }
+
+  /// يرسل العملية للخادم **فورًا** — الأونلاين هو الوضع الغالب، والطابور
+  /// خطة بديلة للانقطاع الفعلي فقط.
+  ///
+  /// - [ImmediateSendStatus.sent]: وصلت — لا `enqueue`.
+  /// - [ImmediateSendStatus.deferred]: **لا اتصال فعليًا** (أو نوع غير موجّه)
+  ///   — على المستدعي أن يضعها في الطابور كما كان يفعل. هذا المسار الوحيد
+  ///   المسموح للطابور طالما التطبيق أونلاين.
+  /// - [ImmediateSendStatus.rejected]: أي فشل إرسال **ونحن أونلاين فعلًا** —
+  ///   رفض نهائي من الخادم (تحقق مثلًا) أو خطأ شبكة عابر (timeout/انقطاع
+  ///   مؤقت) على حدٍّ سواء. **لا تُوضَع في الطابور أبدًا** في كلتا الحالتين:
+  ///   قرار صريح — أونلاين يعني "أرِ المستخدم الخطأ الحقيقي فورًا"، لا تخزين
+  ///   صامت في طابور قد لا يُفرَّغ تلقائيًا لدقائق طويلة.
+  ///
+  /// **قرار المنتج:** طالما أونلاين، لا شيء يُؤجَّل بصمت في الخلفية — أي
+  /// رفض من الخادم (بما فيه تعارض rowVersion 409) يُعرَض فورًا للمستخدم
+  /// ليتصرف، بدل انتظار دورة مزامنة خلفية لاحقة قد تمر دون أن يلاحظها.
+  /// الأوفلاين وحده يبقى مسار التأجيل الطبيعي ([ImmediateSendResult.deferred]).
+  Future<ImmediateSendResult> trySendImmediately({
+    required SyncOperationType type,
+    required String caseId,
+    required Map<String, dynamic> payload,
+    String? idempotencyKey,
+
+    /// `false` يعيد سلوك التأجيل الصامت القديم للتعارض تحديدًا (409) حتى
+    /// وإن كنا أونلاين — احتفظنا بالخيار هنا فقط تحسبًا لمسار مستقبلي
+    /// يحتاجه صراحةً؛ لا مستدعٍ حاليًا يمرر `false`.
+    bool rejectConflictsImmediately = true,
+  }) async {
+    final networkStatus = _networkStatus;
+    final isOnline = networkStatus?.current.isOnline ?? true;
+    if (!isOnline) return ImmediateSendResult.deferred;
+    if (!_isWired(type)) return ImmediateSendResult.deferred;
+
+    try {
+      final sessionOk = await _ensureFreshSession();
+      if (!sessionOk) return ImmediateSendResult.deferred;
+
+      await _dispatchRaw(
+        type: type,
+        caseId: caseId,
+        payload: payload,
+        idempotencyKey: idempotencyKey,
+      );
+      return ImmediateSendResult.sent;
+    } on ApiException catch (e) {
+      if (e.isConflict) {
+        return rejectConflictsImmediately
+            ? ImmediateSendResult.rejected(e)
+            : ImmediateSendResult.deferred;
+      }
+      if (e.requiresReauth) return ImmediateSendResult.deferred;
+      // أونلاين + أي خطأ آخر (تحقق نهائي أو شبكة عابرة) = يُعرَض للمستخدم
+      // فورًا، لا طابور صامت.
+      return ImmediateSendResult.rejected(e);
+    }
+    // ملاحظة: "جلسة منتهية أثناء الانتظار" لا تحتاج معالجة هنا لنفس سبب
+    // `_executeOne` أعلاه — `await _dispatchRaw(...)` لا يعود أصلًا في تلك
+    // الحالة.
   }
 
   CasesApi _requireCasesApi() {
@@ -376,11 +487,11 @@ class SyncEngine {
     return api;
   }
 
-  /// مسارات سير العمل تتطلب `Idempotency-Key` دومًا (§6) — [SyncQueueDao]
-  /// يولّده عند `enqueue` لكل نوع `requiresIdempotencyKey`، فغيابه هنا يعني
-  /// خللًا في طبقة الكتابة نفسها، لا حالة شبكة عادية.
-  String _requireIdempotencyKey(SyncOperationRow op) {
-    final key = op.idempotencyKey;
+  /// مسارات سير العمل تتطلب `Idempotency-Key` دومًا (§6) — سواء أتت من صفّ
+  /// طابور (`SyncQueueDao.enqueue` يولّدها) أو من مفتاح مُمرَّر مباشرة إلى
+  /// [trySendImmediately] — فغيابها هنا يعني خللًا في طبقة الكتابة نفسها،
+  /// لا حالة شبكة عادية.
+  String _requireKey(String? key) {
     if (key == null || key.isEmpty) {
       throw const ApiException(
         code: ApiErrorCode.internalError,
@@ -399,3 +510,22 @@ class SyncEngine {
 }
 
 enum _Outcome { succeeded, failed, conflicted, skipped }
+
+enum ImmediateSendStatus { sent, deferred, rejected }
+
+class ImmediateSendResult {
+  const ImmediateSendResult._(this.status, [this.error]);
+
+  static const sent = ImmediateSendResult._(ImmediateSendStatus.sent);
+  static const deferred = ImmediateSendResult._(ImmediateSendStatus.deferred);
+  factory ImmediateSendResult.rejected(ApiException error) =>
+      ImmediateSendResult._(ImmediateSendStatus.rejected, error);
+
+  final ImmediateSendStatus status;
+
+  /// غير `null` فقط مع [ImmediateSendStatus.rejected].
+  final ApiException? error;
+
+  bool get isSent => status == ImmediateSendStatus.sent;
+  bool get isRejected => status == ImmediateSendStatus.rejected;
+}

@@ -6,7 +6,6 @@ import '../../../../core/providers/data_providers.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../auth/presentation/auth_controller.dart';
-import '../../../case_acceptance/presentation/case_acceptance_screen.dart';
 import '../../../case_list/presentation/case_list_filter.dart';
 import '../../../case_list/presentation/case_list_screen.dart';
 import '../../../profile/presentation/user_profile_provider.dart';
@@ -33,11 +32,6 @@ class HomeDrawer extends ConsumerWidget {
   void _openProfile(BuildContext context) {
     Navigator.of(context).pop();
     UserProfileScreen.open(context);
-  }
-
-  void _openCaseAcceptance(BuildContext context) {
-    Navigator.of(context).pop();
-    CaseAcceptanceScreen.open(context);
   }
 
   void _openReturnedCases(BuildContext context) {
@@ -82,14 +76,20 @@ class HomeDrawer extends ConsumerWidget {
 
     if (confirmed != true) return;
 
+    // `force: true` — المستخدم راجع تحذير العمل المعلّق (إن وُجد) أعلاه
+    // وأكّد المتابعة صراحةً؛ بدونها `endSession` كانت سترفض مسح القاعدة
+    // المحلية لو بقي عمل معلّق، فتفشل عملية خروج قرّرها المستخدم بوعي.
+    //
     // لا تنقّل يدوي: جذر التطبيق يراقب حالة المصادقة ويعرض شاشة الدخول.
-    await ref.read(authControllerProvider.notifier).logout();
+    await ref.read(authControllerProvider.notifier).logout(force: true);
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final profile = ref.watch(userProfileProvider);
-    final displayName = profile.name.isNotEmpty ? profile.name : data.socialWorkerName;
+    final profile = ref.watch(userProfileProvider).valueOrNull;
+    final displayName = (profile?.fullName.isNotEmpty ?? false)
+        ? profile!.fullName
+        : data.socialWorkerName;
 
     return Drawer(
       backgroundColor: AppColors.background,
@@ -112,8 +112,7 @@ class HomeDrawer extends ConsumerWidget {
                   children: [
                     UserAvatar(
                       radius: 36,
-                      imagePath: profile.imagePath,
-                      avatarEmoji: profile.avatarEmoji,
+                      avatarUrl: profile?.avatarUrl,
                       name: displayName,
                     ),
                     const SizedBox(height: AppSpacing.md),
@@ -158,13 +157,6 @@ class HomeDrawer extends ConsumerWidget {
                     onTap: () => _openProfile(context),
                   ),
                   const Divider(height: 20, color: AppColors.border),
-                  _DrawerTile(
-                    icon: Icons.assignment_turned_in_outlined,
-                    title: 'قبول الحالات',
-                    badge: '2 جديدة',
-                    badgeColor: AppColors.primary,
-                    onTap: () => _openCaseAcceptance(context),
-                  ),
                   _DrawerTile(
                     icon: Icons.folder_outlined,
                     title: 'كل حالاتي',

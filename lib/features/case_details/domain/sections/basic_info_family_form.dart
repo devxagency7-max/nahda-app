@@ -1,3 +1,7 @@
+import 'package:uuid/uuid.dart';
+
+const _uuid = Uuid();
+
 /// نموذج قابل للتعديل يطابق حقول صفحة "البيانات الأساسية" في الويب
 /// (web/index.html — SECTION 1 المعلومات الشخصية، SECTION 2 الوظيفية والدينية،
 /// SECTION 3 العنوان).
@@ -30,9 +34,19 @@ class BasicInfoFormData {
   String? birthGovernorate; // محافظة الميلاد (مستخرجة تلقائياً من الرقم القومي)
 
   // الجمعية والنطاق الجغرافي — المركز والقرية والجمعية المسؤولة عن متابعة الحالة
-  String? referralDistrict; // المركز / المدينة
-  String? referralVillage; // القرية / المنطقة
+  String? referralDistrict; // المركز / المدينة (اسم — للعرض)
+  String? referralVillage; // القرية / المنطقة (اسم — للعرض)
   String? charity; // الجمعية
+
+  // معرّفات المركز/القرية الحقيقية (GUID) — هي اللي بتترسل فعليًا في
+  // PUT /beneficiary (centerId/villageId)، مش الاسم.
+  String? centerId;
+  String? villageId;
+
+  // معرّف الجمعية الحقيقي (GUID) — بيترسل في PUT /cases/{id}/charity
+  // (endpoint جديد، رد الباك إند بتاريخ 2026-09-26). `charity` فوق ده لسه
+  // اسمها بس للعرض/الكاش المحلي.
+  String? charityId;
 
   BasicInfoFormData({
     this.caseName = '',
@@ -58,6 +72,9 @@ class BasicInfoFormData {
     this.referralDistrict,
     this.referralVillage,
     this.charity,
+    this.centerId,
+    this.villageId,
+    this.charityId,
   });
 
   /// الحقول المطلوبة فقط حسب الويب (عليها * — اسم الحالة والرقم القومي).
@@ -91,6 +108,7 @@ class BasicInfoFormData {
 
 /// القسم 4 — أفراد الأسرة التابعين (SECTION 4 في الويب). تاب مستقل بذاته.
 class FamilyMemberFormData {
+  final String id;
   String name;
   String relation; // صلة القرابة
   String? nationalId;
@@ -110,6 +128,7 @@ class FamilyMemberFormData {
   String? notes;
 
   FamilyMemberFormData({
+    String? id,
     this.name = '',
     this.relation = '',
     this.nationalId,
@@ -126,7 +145,7 @@ class FamilyMemberFormData {
     this.takafulKarama = false,
     this.takafulKaramaAmount,
     this.notes,
-  });
+  }) : id = id ?? _uuid.v4();
 
   bool get isComplete => name.trim().isNotEmpty && relation.trim().isNotEmpty;
 }

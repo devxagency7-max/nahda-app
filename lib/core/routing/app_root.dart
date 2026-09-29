@@ -3,7 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/auth/presentation/auth_controller.dart';
 import '../../features/auth/presentation/login_screen.dart';
+import '../../features/case_search/domain/case_search_filter.dart';
+import '../../features/case_search/presentation/case_search_providers.dart';
 import '../../features/home/presentation/home_screen.dart';
+import '../../features/profile/presentation/user_profile_provider.dart';
 import '../providers/data_providers.dart';
 import '../theme/app_colors.dart';
 import '../widgets/app_background.dart';
@@ -74,7 +77,37 @@ class _AppRootState extends ConsumerState<AppRoot> with WidgetsBindingObserver {
     final child = switch (state) {
       AuthRestoring() => const _SplashScreen(),
       AuthSignedOut() => const LoginScreen(),
-      AuthSignedIn() => const HomeScreen(),
+      // مزوّدات الشاشات التي تحتفظ بحالة محلية بين المستخدمين تُعاد تهيئتها
+      // هنا صراحةً بمفتاح مرتبط بهوية المستخدم، حتى لا يرى مستخدم جديد
+      // بحثًا أو نتيجة مزامنة تخص مستخدم سابق:
+      // - `caseSearchQueryProvider`/`caseSearchFilterProvider`: نص البحث
+      //   والفلتر. `caseSearchResultsProvider` نفسه (نتائج البحث، رغم
+      //   `keepAlive` الذي يمنع تنظيفه التلقائي المعتاد كـ `autoDispose`)
+      //   **لا يحتاج override منفصل** — يعتمد عليهما بـ `ref.watch`، فيُبنى
+      //   تلقائيًا داخل نفس هذا الـ scope الفرعي (قاعدة Riverpod: provider
+      //   يعتمد transitively على override يُعامَل معاملته).
+      // - `lastSyncResultProvider`: نتيجة آخر دورة مزامنة — لا يعتمد على
+      //   أي شيء آخر، فيحتاج override صريحًا مستقلًا.
+      //
+      // مزوّدات غير مذكورة هنا ولا تعتمد على أي منها (مثل `currentUserProvider`)
+      // تبقى موروثة من الجذر كالمعتاد — `ProviderScope` المتداخل بلا override
+      // صريح (مباشر أو transitive) لا يعزلها (توثيق Riverpod: "non-overridden
+      // providers are mounted in the root container").
+      AuthSignedIn(:final user) => ProviderScope(
+        key: ValueKey('signed-in-${user.id}'),
+        overrides: [
+          caseSearchQueryProvider.overrideWith((ref) => ''),
+          caseSearchFilterProvider.overrideWith((ref) => const CaseSearchFilter()),
+          lastSyncResultProvider.overrideWith((ref) => null),
+          // `ref.watch(currentUserProvider)` داخل `UserProfileNotifier.build`
+          // وحده لا يكفي لعزله: `currentUserProvider` نفسه غير overridden
+          // هنا، فالاعتماد transitive عليه لا يُدخل `userProfileProvider` في
+          // هذا الـ scope الفرعي (قاعدة Riverpod تشترط أن يكون المُعتمَد
+          // عليه نفسه overridden). override صريح هو الضمان الوحيد.
+          userProfileProvider.overrideWith(UserProfileNotifier.new),
+        ],
+        child: const HomeScreen(),
+      ),
     };
 
     // إشعار سبب الخروج القسري (انتهاء الجلسة) بعد رسم شاشة الدخول.

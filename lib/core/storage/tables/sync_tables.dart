@@ -17,6 +17,14 @@ class SyncQueue extends Table {
   /// التفريغ مُجمَّع حسبها: تعارض في حالة **لا يوقف** مزامنة حالة أخرى.
   TextColumn get caseId => text()();
 
+  /// معرّف المستخدم الذي أنشأ هذه العملية — `AuthUser.id` وقت `enqueue`.
+  ///
+  /// **`null` فقط للصفوف الموجودة قبل هذا العمود** (ترقية من الإصدار ١، راجع
+  /// `AppDatabase.migration`) — لا يُنشَأ أي صفّ جديد بدونه بعد اليوم. يمنع
+  /// `SyncEngine`/`background_sync.dart` من تنفيذ عملية حساب سابق بتوكن حساب
+  /// لاحق على نفس الجهاز (AUTH_SESSION_AUDIT.md، مشكلة #4 CRITICAL).
+  TextColumn get userId => text().nullable()();
+
   /// ترتيب الإنشاء داخل نفس الحالة — التفريغ يحترمه بصرامة.
   IntColumn get sequence => integer()();
 

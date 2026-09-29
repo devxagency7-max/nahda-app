@@ -69,13 +69,16 @@ class CasesApi {
     },
   );
 
-  /// `GET /cases/{id}` — التفاصيل الكاملة.
+  /// `GET /cases/{id}` — التفاصيل الكاملة، خام كما وصلت من الخادم.
   ///
-  /// كل استدعاء ناجح يسجّل حدث تدقيق `CASE_VIEWED` على الخادم.
-  /// هذه الاستجابة هي **المصدر الرسمي** لكل من `rowVersion` (الحالة) و
-  /// `beneficiary.rowVersion` — لا تُخلَطا.
-  Future<CaseDetailsDto> details(String caseId) =>
-      _client.get<CaseDetailsDto>('/cases/$caseId', CaseDetailsDto.fromJson);
+  /// كل استدعاء ناجح يسجّل حدث تدقيق `CASE_VIEWED` على الخادم — لذا يُستدعى
+  /// **مرة واحدة فقط**، والمُستدعي (`CasesRepository.refreshCaseDetails`)
+  /// يبني منها `CaseDetailsDto` **و** يقرأ أقسام `housing`/`utilities`/
+  /// `agriculture`/`financial`/`initialNeeds`/`classification`/
+  /// `assessedNeeds`/`familyMembers` المضمّنة فيها (BACKEND_CHANGE_RESPONSE
+  /// طلب 13) — إرجاعها خامًا هنا يمنع استدعاءً ثانيًا لنفس المسار.
+  Future<Map<String, dynamic>> details(String caseId) =>
+      _client.get<Map<String, dynamic>>('/cases/$caseId', Parse.object);
 
   /// `GET /cases/{id}/completion` — نسب الإكمال لكل قسم.
   Future<CaseCompletionDto> completion(String caseId) =>
@@ -94,6 +97,14 @@ class CasesApi {
         '/cases/$caseId/family-members',
         Parse.object,
       );
+
+  /// `GET /cases/{caseId}/support` — الدعم المقترح + المعتمد + سجل الدعم
+  /// المصروف قديمًا (`history[]`)، خام كما وصل من الخادم (§19.5).
+  ///
+  /// للعرض فقط هنا — لا `PUT` مرتبط بهذا الاستدعاء. `history[].recipientName`
+  /// نص حر (لا `familyMemberId`)، فالمطابقة مع فرد بعينه تتم بالاسم لا بمعرّف.
+  Future<Map<String, dynamic>> support(String caseId) =>
+      _client.get<Map<String, dynamic>>('/cases/$caseId/support', Parse.object);
 
   /// `GET /search/cases`.
   ///
@@ -266,6 +277,18 @@ class CasesApi {
     Map<String, dynamic> payload,
   ) => _client.put<Map<String, dynamic>>(
     '/cases/$caseId/assessed-needs',
+    Parse.object,
+    body: payload,
+  );
+
+  /// `PUT /cases/{id}/charity` — endpoint جديد (رد الباك إند بتاريخ
+  /// 2026-09-26) لتغيير الجمعية المسؤولة عن حالة موجودة. قبل كده مفيش أي
+  /// endpoint كان يقبل تعديل charityId بعد إنشاء الحالة.
+  Future<Map<String, dynamic>> updateCharity(
+    String caseId,
+    Map<String, dynamic> payload,
+  ) => _client.put<Map<String, dynamic>>(
+    '/cases/$caseId/charity',
     Parse.object,
     body: payload,
   );

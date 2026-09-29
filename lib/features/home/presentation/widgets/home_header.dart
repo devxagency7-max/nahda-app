@@ -31,8 +31,10 @@ class HomeHeader extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final profile = ref.watch(userProfileProvider);
-    final displayName = profile.name.isNotEmpty ? profile.name : fallbackName;
+    final profile = ref.watch(userProfileProvider).valueOrNull;
+    final displayName = (profile?.fullName.isNotEmpty ?? false)
+        ? profile!.fullName
+        : fallbackName;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -87,8 +89,7 @@ class HomeHeader extends ConsumerWidget {
             children: [
               UserAvatar(
                 radius: 26,
-                imagePath: profile.imagePath,
-                avatarEmoji: profile.avatarEmoji,
+                avatarUrl: profile?.avatarUrl,
                 name: displayName,
                 onTap: () => UserProfileScreen.open(context),
               ),

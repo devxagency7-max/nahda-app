@@ -41,4 +41,25 @@ class AssessedNeedsMapper {
     ],
     'caseRowVersion': caseRowVersion,
   };
+
+  /// يبني [AssessedNeedsFormData] من استجابة `PUT`/`GET /assessed-needs`
+  /// الفعلية من الخادم.
+  static AssessedNeedsFormData fromApiResponse(Map<String, dynamic> json) {
+    final rawNeeds = json['needs'] as List? ?? const [];
+    return AssessedNeedsFormData(
+      needs: [
+        for (final n in rawNeeds.whereType<Map<String, dynamic>>())
+          AssessedNeedFormData(
+            needType: n['needType'] as String? ?? '',
+            category: n['category'] as String?,
+            description: n['description'] as String?,
+            priorityLevel: n['priorityLevel'] as String? ?? '',
+            reason: n['reason'] as String?,
+            source: n['source'] as String? ?? '',
+            status: n['status'] as String? ?? '',
+            notes: n['notes'] as String?,
+          ),
+      ],
+    );
+  }
 }

@@ -17,21 +17,25 @@ import '../../case_details/presentation/case_details_screen.dart';
 
 /// خريطة نوع العملية ← فهرس التاب المطابق في [CaseDetailsScreen] — تُستخدَم
 /// فقط لتوجيه "ادمج يدويًا"؛ راجع `_tabLabels` في `case_details_screen.dart`.
+///
+/// تابا "التصنيف الاجتماعي"/"الاحتياجات المُقيَّمة" اتشالوا من الشاشة، وتاب
+/// "المرفقات" (updateInitialNeeds) بقى بعد "الدخل والمصروفات" — الفهارس هنا
+/// اتحدَّثت لتطابق [_tabLabels] الجديدة في case_details_screen.dart.
 const _tabIndexForType = {
   SyncOperationType.updateBeneficiary: 0,
+  SyncOperationType.updateCharity: 0,
   SyncOperationType.updateFamilyMembers: 1,
-  SyncOperationType.updateHousing: 3,
-  SyncOperationType.updateUtilities: 4,
-  SyncOperationType.updateAgriculture: 5,
-  SyncOperationType.updateFinancial: 6,
-  SyncOperationType.updateInitialNeeds: 2,
-  SyncOperationType.updateClassification: 7,
-  SyncOperationType.updateAssessedNeeds: 8,
-  SyncOperationType.updateSupportRecommendations: 9,
+  SyncOperationType.updateHousing: 2,
+  SyncOperationType.updateUtilities: 3,
+  SyncOperationType.updateAgriculture: 4,
+  SyncOperationType.updateFinancial: 5,
+  SyncOperationType.updateInitialNeeds: 6,
+  SyncOperationType.updateSupportRecommendations: 7,
 };
 
 const _typeLabels = {
   SyncOperationType.updateBeneficiary: 'بيانات المستفيد',
+  SyncOperationType.updateCharity: 'الجمعية',
   SyncOperationType.updateFamilyMembers: 'أفراد الأسرة',
   SyncOperationType.updateHousing: 'بيانات السكن',
   SyncOperationType.updateUtilities: 'المرافق والأجهزة',

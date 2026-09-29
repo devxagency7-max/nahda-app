@@ -8,47 +8,63 @@ import '../../cases/domain/case_status.dart';
 import '../domain/home_summary.dart';
 import '../domain/social_worker_case.dart';
 
-/// بيانات الشاشة الرئيسية — **من الكاش المحلي**.
-///
-/// تظهر فورًا عند فتح التطبيق حتى بلا اتصال، وتتحدّث تلقائيًا كلما كتبت
-/// المزامنة في قاعدة البيانات. لا انتظار للشبكة ولا شاشة خطأ لانقطاعها.
-final homeDataProvider = StreamProvider<HomeData>((ref) {
+/// بيانات الشاشة الرئيسية — Online-First: تُبنى من استجابة الخادم مباشرة
+/// عند توفّر الاتصال (عبر [CasesRepository.getWorkQueue])، وتقع على الكاش
+/// المحلي فقط عند الأوفلاين أو فشل الشبكة.
+final homeDataProvider = FutureProvider<HomeData>((ref) async {
   final repository = ref.watch(casesRepositoryProvider);
   final user = ref.watch(currentUserProvider);
 
-  return repository.watchWorkQueue().asyncMap((rows) async {
-    final bookmarked = await repository.watchBookmarked().first;
+  final rows = await repository.getWorkQueue();
 
-    final cases = rows.map(CaseStatusMapper.toDisplayCase).toList();
+  final cases = rows.map(CaseStatusMapper.toDisplayCase).toList();
 
-    // "مهامي دلوقتي" مقابل "تم إرسالها" — تقسيم عرضي بحت.
-    final active = <SocialWorkerCase>[];
-    final submitted = <SocialWorkerCase>[];
+  // "مهامي دلوقتي" مقابل "تم إرسالها" — تقسيم عرضي بحت.
+  final active = <SocialWorkerCase>[];
+  final submitted = <SocialWorkerCase>[];
 
-    for (final item in cases) {
-      if (item.status == CaseWorkStatus.submittedForReview) {
-        submitted.add(item);
-      } else {
-        active.add(item);
-      }
+  const submittedStatuses = {
+    CaseWorkStatus.submittedForReview,
+    CaseWorkStatus.pendingApproval,
+    CaseWorkStatus.approved,
+    CaseWorkStatus.rejected,
+  };
+
+  for (final item in cases) {
+    if (submittedStatuses.contains(item.status)) {
+      submitted.add(item);
+    } else {
+      active.add(item);
     }
+  }
 
-    active.sort(_byUrgency);
+  active.sort(_byUrgency);
 
-    return HomeData(
-      socialWorkerName: user?.fullName ?? '',
-      unreadNotifications: 0,
-      counters: HomeCounters(
-        allCases: rows.length,
-        savedCases: bookmarked.length,
-        returnedCases: rows
-            .where((r) => r.status == CaseStatus.returnedToWorker.wireValue)
-            .length,
-      ),
-      priorityTasks: active,
-      submittedCases: submitted,
-    );
-  });
+  return HomeData(
+    socialWorkerName: user?.fullName ?? '',
+    unreadNotifications: 0,
+    counters: HomeCounters(
+      // "كل حالاتي" = الحالات اللي اتبعتت فعليًا للمراجع فقط.
+      allCases: submitted.length,
+      // "الحالات المحفوظة" = الحالات المُسنَدة لهذا الأخصائي من الـ Data
+      // Entry (status == assigned) — تظهر هنا فور الإسناد مباشرة، بلا أي
+      // فعل قبول من جانبه — بالإضافة إلى الحالات التي كلّف الأخصائي نفسه بها
+      // (status == in_research بعد الضغط على "تكليف")، طبقًا لنفس تعريف
+      // `CasesRepository.watchAssigned`.
+      savedCases: rows
+          .where(
+            (r) =>
+                r.status == CaseStatus.assigned.wireValue ||
+                r.status == CaseStatus.inResearch.wireValue,
+          )
+          .length,
+      returnedCases: rows
+          .where((r) => r.status == CaseStatus.returnedToWorker.wireValue)
+          .length,
+    ),
+    priorityTasks: active,
+    submittedCases: submitted,
+  );
 });
 
 /// المرتجعة فقط — لشاشة "الحالات المرتجعة".
@@ -59,26 +75,35 @@ final returnedCasesListProvider = StreamProvider<List<SocialWorkerCase>>((ref) {
       .map((rows) => rows.map(CaseStatusMapper.toDisplayCase).toList());
 });
 
-/// المحفوظة.
+/// المحفوظة — الحالات المُسنَدة لهذا الأخصائي (assigned) بانتظار بدء العمل
+/// عليها، تظهر تلقائيًا فور إرسالها من الـ Data Entry.
 final savedCasesListProvider = StreamProvider<List<SocialWorkerCase>>((ref) {
   return ref
       .watch(casesRepositoryProvider)
-      .watchBookmarked()
+      .watchAssigned()
       .map((rows) => rows.map(CaseStatusMapper.toDisplayCase).toList());
 });
 
 /// حالة العرض العلوية: متصل / غير متصل / جارٍ المزامنة.
 final syncBannerProvider = Provider<SyncBanner>((ref) {
-  final connection = ref.watch(connectionKindProvider).valueOrNull;
+  final statusAsync = ref.watch(networkStatusProvider);
   final pending = ref.watch(pendingSyncCountProvider).valueOrNull ?? 0;
   final photos = ref.watch(pendingAttachmentCountProvider).valueOrNull ?? 0;
+  final attention = ref.watch(syncNeedsAttentionCountProvider).valueOrNull ?? 0;
 
-  final isOffline = connection == null || !connection.isOnline;
+  // أثناء تحميل أول قراءة اتصال (لحظة إقلاع التطبيق، قبل أن ينهي
+  // `NetworkStatusService.start()` أول فحص) لا قيمة بعد — `valueOrNull` تكون
+  // `null`. الافتراض هنا **متصل** لا أوفلاين: الاتصال هو الوضع الغالب لهذا
+  // التطبيق، فمعاملة "لسه بنتأكد" كأوفلاين تعني ومضة بانر "بدون اتصال"
+  // مضلِّلة عند كل فتح للتطبيق رغم وجود إنترنت فعلي.
+  final status = statusAsync.valueOrNull;
+  final isOffline = status != null && !status.isOnline;
 
   return SyncBanner(
     isOffline: isOffline,
     pendingOperations: pending,
     pendingPhotos: photos,
+    needsAttention: attention,
   );
 });
 
@@ -88,18 +113,27 @@ class SyncBanner {
     required this.isOffline,
     required this.pendingOperations,
     required this.pendingPhotos,
+    this.needsAttention = 0,
   });
 
   final bool isOffline;
   final int pendingOperations;
   final int pendingPhotos;
 
+  /// عمليات متوقّفة لن تُرسَل تلقائيًا — لا "جارٍ رفع" لها، بل "راجِعها".
+  final int needsAttention;
+
   bool get hasPendingWork => pendingOperations > 0 || pendingPhotos > 0;
 
+  bool get hasAttention => needsAttention > 0;
+
   /// يظهر الشريط فقط حين يعني شيئًا للمستخدم.
-  bool get isVisible => isOffline || hasPendingWork;
+  bool get isVisible => isOffline || hasPendingWork || hasAttention;
 
   String get message {
+    if (!isOffline && !hasPendingWork && hasAttention) {
+      return '$needsAttention عملية لم تُقبَل من الخادم — اضغط للمراجعة';
+    }
     if (isOffline && hasPendingWork) {
       return 'بدون اتصال — $_pendingLabel محفوظ على الجهاز';
     }

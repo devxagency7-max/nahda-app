@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 
 import '../config/app_config.dart';
+import '../session/session_registry.dart';
 import '../storage/secure_token_store.dart';
 import 'api_envelope.dart';
 import 'api_exception.dart';
@@ -12,19 +15,33 @@ import 'interceptors/idempotency_interceptor.dart';
 ///
 /// كل دوالّه ترمي [ApiException] فقط — لا `DioException` يعبر هذه الطبقة.
 ///
+/// **نتيجة تخص جلسة منتهية (logout/تبديل حساب حدث أثناء انتظار الرد) لا
+/// تُرمى كاستثناء إطلاقًا** — الطلبات الجارية تُلغى فعليًا عبر
+/// `SessionRegistry.cancelToken` عند إنهاء الجلسة (`DioException.cancel`
+/// العادي، معالَج ضمن `on DioException` كأي إلغاء آخر)، وفي النافذة
+/// الضيقة النادرة التي يصل فيها الرد قبل معالجة الإلغاء، يُترَك `Future`
+/// الاستدعاء **معلَّقًا بلا اكتمال أبدًا** بدل رمي نوع استثناء جديد كل طبقة
+/// (شاشات، repositories) يجب أن تتعلّم توقّعه وتجاهله. هذا آمن لأن نفس
+/// `cancelToken` (المُلغى بالفعل) هو ما يُغلق دورة حياة ذلك الانتظار — أي
+/// `catchError`/`whenComplete` مرتبط بدورة حياة widget يُنظَّف مع تخلّصه
+/// عادةً، ولا كود بعد نقطة الانتظار هذه ينفَّذ أبدًا لبيانات لا تخص أي
+/// جلسة نشطة حاليًا.
+///
 /// **قاعدة معمارية:** هذا الصنف يُستخدم من `*_api.dart` (طبقة remote) فقط،
 /// ويستدعيها `SyncEngine` وحده. الـ repositories لا تلمس الشبكة مباشرة —
 /// تكتب في Drift وتضيف للطابور. راجع §2.2 من خطة الربط.
 class ApiClient {
-  ApiClient._(this._dio);
+  ApiClient._(this._dio, this._session);
 
   final Dio _dio;
+  final SessionRegistry? _session;
 
   Dio get raw => _dio;
 
   factory ApiClient.create({
     required SecureTokenStore tokenStore,
     required Future<void> Function() onSessionExpired,
+    SessionRegistry? session,
     String? baseUrl,
   }) {
     final resolvedBase = baseUrl ?? AppConfig.apiBaseUrl;
@@ -65,7 +82,7 @@ class ApiClient {
         ),
     ]);
 
-    return ApiClient._(dio);
+    return ApiClient._(dio, session);
   }
 
   Future<T> get<T>(
@@ -75,11 +92,12 @@ class ApiClient {
     CancelToken? cancelToken,
   }) => _send(
     parser,
-    () => _dio.get<dynamic>(
+    (token) => _dio.get<dynamic>(
       path,
       queryParameters: _clean(query),
-      cancelToken: cancelToken,
+      cancelToken: token,
     ),
+    cancelToken,
   );
 
   Future<T> post<T>(
@@ -91,13 +109,14 @@ class ApiClient {
     CancelToken? cancelToken,
   }) => _send(
     parser,
-    () => _dio.post<dynamic>(
+    (token) => _dio.post<dynamic>(
       path,
       data: body,
       queryParameters: _clean(query),
-      cancelToken: cancelToken,
+      cancelToken: token,
       options: _withIdempotency(idempotencyKey),
     ),
+    cancelToken,
   );
 
   Future<T> put<T>(
@@ -108,12 +127,13 @@ class ApiClient {
     CancelToken? cancelToken,
   }) => _send(
     parser,
-    () => _dio.put<dynamic>(
+    (token) => _dio.put<dynamic>(
       path,
       data: body,
-      cancelToken: cancelToken,
+      cancelToken: token,
       options: _withIdempotency(idempotencyKey),
     ),
+    cancelToken,
   );
 
   Future<T> delete<T>(
@@ -123,19 +143,24 @@ class ApiClient {
     CancelToken? cancelToken,
   }) => _send(
     parser,
-    () => _dio.delete<dynamic>(path, data: body, cancelToken: cancelToken),
+    (token) => _dio.delete<dynamic>(path, data: body, cancelToken: token),
+    cancelToken,
   );
 
   /// إرسال الترويسات الخاصة بالمصادقة (`X-Client-Type`) — §2.1.
   ///
   /// مقصورة على login/refresh/logout؛ لا تُرسَل مع المسارات المحمية.
+  ///
+  /// **لا تُمرَّر `cancelToken` الجلسة هنا** — `login()` نفسه يُستدعى *قبل*
+  /// وجود جلسة، و`logout()` يُستدعى أثناء إنهائها (بعد إلغاء الـ token
+  /// القديم بالفعل)؛ ربطهما بالـ CancelToken كان يعني إلغاء طلب الدخول نفسه.
   Future<T> postAuth<T>(
     String path,
     T Function(Object? data) parser, {
     Object? body,
   }) => _send(
     parser,
-    () => _dio.post<dynamic>(
+    (_) => _dio.post<dynamic>(
       path,
       data: body,
       options: Options(
@@ -143,20 +168,51 @@ class ApiClient {
         extra: {kSkipAuthRefresh: true},
       ),
     ),
+    null,
+    trackSession: false,
   );
 
   Future<T> _send<T>(
     T Function(Object? data) parser,
-    Future<Response<dynamic>> Function() request,
-  ) async {
+    Future<Response<dynamic>> Function(CancelToken?) request,
+    CancelToken? explicitCancelToken, {
+    bool trackSession = true,
+  }) async {
+    final session = trackSession ? _session : null;
+    final capturedGeneration = session?.generation;
+    final token = explicitCancelToken ?? session?.cancelToken;
+
+    // الجلسة التي أطلقت هذا الطلب لم تعد الجلسة النشطة الآن — لا داعي حتى
+    // لإطلاق الطلب فعليًا. `Completer` بلا `complete` أبدًا: انتظار بلا
+    // نتيجة، لا استثناء يتوجّب على كل طبقة أعلى توقّعه.
+    if (session != null &&
+        capturedGeneration != null &&
+        !session.isCurrent(capturedGeneration)) {
+      return Completer<T>().future;
+    }
+
     try {
-      final response = await request();
+      final response = await request(token);
+
+      // الجيل تغيّر أثناء انتظار الرد تحديدًا (logout/login آخر وقع بين
+      // إطلاق الطلب واستلام الرد) — النتيجة لا تخص أي جلسة نشطة الآن.
+      if (session != null && capturedGeneration != null && !session.isCurrent(capturedGeneration)) {
+        return Completer<T>().future;
+      }
+
       return ApiEnvelope.parse<T>(
         response.data,
         parser,
         statusCode: response.statusCode,
       );
     } on DioException catch (e) {
+      if (session != null &&
+          capturedGeneration != null &&
+          !session.isCurrent(capturedGeneration)) {
+        // يشمل `DioExceptionType.cancel` الناتج عن `cancelToken.cancel()`
+        // في `SessionRegistry.endSession` — المسار المتوقَّع الشائع.
+        return Completer<T>().future;
+      }
       final error = e.error;
       if (error is ApiException) throw error;
       throw ApiEnvelope.parseError(

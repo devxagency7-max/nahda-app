@@ -1,21 +1,17 @@
-import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_colors.dart';
 
 class UserAvatar extends StatelessWidget {
   final double radius;
-  final String? imagePath;
-  final String avatarEmoji;
+  final String? avatarUrl;
   final String name;
   final VoidCallback? onTap;
 
   const UserAvatar({
     super.key,
     this.radius = 28,
-    this.imagePath,
-    required this.avatarEmoji,
+    this.avatarUrl,
     required this.name,
     this.onTap,
   });
@@ -24,19 +20,10 @@ class UserAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     Widget avatarChild;
 
-    if (imagePath != null && imagePath!.isNotEmpty && !kIsWeb && File(imagePath!).existsSync()) {
+    if (avatarUrl != null && avatarUrl!.isNotEmpty) {
       avatarChild = CircleAvatar(
         radius: radius,
-        backgroundImage: FileImage(File(imagePath!)),
-      );
-    } else if (avatarEmoji.isNotEmpty && avatarEmoji != '👨‍💼') {
-      avatarChild = CircleAvatar(
-        radius: radius,
-        backgroundColor: AppColors.primary.withValues(alpha: 0.12),
-        child: Text(
-          avatarEmoji,
-          style: TextStyle(fontSize: radius * 0.9),
-        ),
+        backgroundImage: NetworkImage(avatarUrl!),
       );
     } else {
       avatarChild = CircleAvatar(

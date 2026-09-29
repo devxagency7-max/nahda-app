@@ -23,6 +23,10 @@ class CaseListItemDto {
     this.nextVisitLocation,
     required this.isBookmarked,
     this.returnedBy,
+    this.phonePrimary,
+    this.centerName,
+    this.villageName,
+    this.charityName,
   });
 
   final String id;
@@ -51,6 +55,11 @@ class CaseListItemDto {
   /// يُقرأ تفاؤليًا: يعمل فور إضافته دون تغيير كود.
   final ReturnSource? returnedBy;
 
+  final String? phonePrimary;
+  final String? centerName;
+  final String? villageName;
+  final String? charityName;
+
   /// هل توجد زيارة مجدولة؟
   ///
   /// "زيارة مجدولة" ليست حالة على الشبكة — تُشتقّ من وجود `nextVisitDate`.
@@ -78,6 +87,10 @@ class CaseListItemDto {
       returnedBy: json['returnedBy'] == null
           ? null
           : ReturnSource.fromWire(json['returnedBy'] as String?),
+      phonePrimary: json['phonePrimary'] as String?,
+      centerName: json['centerName'] as String?,
+      villageName: json['villageName'] as String?,
+      charityName: json['charityName'] as String?,
     );
   }
 

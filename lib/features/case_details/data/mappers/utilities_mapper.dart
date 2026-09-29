@@ -51,4 +51,69 @@ class UtilitiesMapper {
     ],
     'caseRowVersion': caseRowVersion,
   };
+
+  /// يعيد بناء [UtilitiesEquipmentFormData] من شكل التخزين المحلي
+  /// (`toCacheJson`) — بلا فقد. يُستخدَم عند إعادة فتح تاب المرافق/التجهيزات
+  /// لعرض ما حفظه الأخصائي فعليًا بدل فورم فاضٍ (تلقائيًا بالقيم
+  /// الافتراضية).
+  static UtilitiesEquipmentFormData fromCacheJson(Map<String, dynamic> json) {
+    final rawUtilities = json['utilities'] as List? ?? const [];
+    final rawEquipment = json['equipment'] as List? ?? const [];
+    return UtilitiesEquipmentFormData(
+      utilities: [
+        for (final u in rawUtilities.whereType<Map<String, dynamic>>())
+          UtilityItemFormData(
+            name: u['name'] as String? ?? '',
+            isAvailable: u['isAvailable'] as bool? ?? false,
+            condition: u['condition'] as String?,
+            sourceOrMeter: u['sourceOrMeter'] as String?,
+          ),
+      ],
+      equipment: [
+        for (final e in rawEquipment.whereType<Map<String, dynamic>>())
+          EquipmentItemFormData(
+            name: e['name'] as String? ?? '',
+            category: e['category'] as String? ?? '',
+            isPresent: e['isPresent'] as bool? ?? false,
+          ),
+      ],
+    );
+  }
+
+  /// يبني [UtilitiesEquipmentFormData] من استجابة `PUT`/`GET /utilities`
+  /// الفعلية من الخادم (§19) — `appliances[].applianceKey` يقابل
+  /// `EquipmentItemFormData.name`؛ الخادم لا يرجع `category` فتبقى فاضية
+  /// (تجميع UI فقط، لا يصل للعقد أصلًا حسب [toApiPayload]).
+  static UtilitiesEquipmentFormData fromApiResponse(
+    Map<String, dynamic> json,
+  ) {
+    final rawAppliances = json['appliances'] as List? ?? const [];
+    final rawUtilities = json['utilities'] as List? ?? const [];
+
+    // لسه محدش عمل PUT لهذا القسم — نرجّع القوائم الافتراضية القابلة
+    // للتعديل بدل قوائم فاضية تمامًا (نفس سلوك فورم جديد لم يُحفَظ بعد).
+    if (rawAppliances.isEmpty && rawUtilities.isEmpty) {
+      return UtilitiesEquipmentFormData();
+    }
+
+    return UtilitiesEquipmentFormData(
+      utilities: [
+        for (final u in rawUtilities.whereType<Map<String, dynamic>>())
+          UtilityItemFormData(
+            name: u['name'] as String? ?? '',
+            isAvailable: u['isAvailable'] as bool? ?? false,
+            condition: u['condition'] as String?,
+            sourceOrMeter: u['sourceOrMeter'] as String?,
+          ),
+      ],
+      equipment: [
+        for (final a in rawAppliances.whereType<Map<String, dynamic>>())
+          EquipmentItemFormData(
+            name: a['applianceKey'] as String? ?? '',
+            category: '',
+            isPresent: a['isPresent'] as bool? ?? false,
+          ),
+      ],
+    );
+  }
 }

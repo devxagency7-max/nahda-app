@@ -2,7 +2,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/attachments/data/attachment_uploader.dart';
 import '../../features/attachments/data/attachments_api.dart';
-import '../../features/auth/presentation/auth_controller.dart';
 import '../../features/cases/data/cases_api.dart';
 import '../../features/cases/data/cases_repository.dart';
 import '../../features/cases/data/workflow_api.dart';
@@ -36,12 +35,15 @@ final casesRepositoryProvider = Provider<CasesRepository>(
     api: ref.watch(casesApiProvider),
     db: ref.watch(appDatabaseProvider),
     queue: ref.watch(syncQueueProvider),
+    syncEngine: ref.watch(syncEngineProvider),
+    networkStatus: ref.watch(networkStatusServiceProvider),
   ),
 );
 
-/// طابور عمل الأخصائي — **يقرأ من الكاش**، فيظهر فورًا بلا شبكة.
-final workQueueProvider = StreamProvider<List<CachedCaseRow>>(
-  (ref) => ref.watch(casesRepositoryProvider).watchWorkQueue(),
+/// طابور عمل الأخصائي — Online-First: يجلب من الخادم مباشرة عند توفّر
+/// الاتصال، ويقع على الكاش المحلي فقط عند الأوفلاين أو فشل الشبكة.
+final workQueueProvider = FutureProvider<List<CachedCaseRow>>(
+  (ref) => ref.watch(casesRepositoryProvider).getWorkQueue(),
 );
 
 final bookmarkedCasesProvider = StreamProvider<List<CachedCaseRow>>(
@@ -66,6 +68,7 @@ final referenceRepositoryProvider = Provider<ReferenceRepository>(
   (ref) => ReferenceRepository(
     api: ref.watch(referenceApiProvider),
     db: ref.watch(appDatabaseProvider),
+    networkStatus: ref.watch(networkStatusServiceProvider),
   ),
 );
 
@@ -136,6 +139,8 @@ final notificationsRepositoryProvider = Provider<NotificationsRepository>(
     api: ref.watch(notificationsApiProvider),
     db: ref.watch(appDatabaseProvider),
     queue: ref.watch(syncQueueProvider),
+    syncEngine: ref.watch(syncEngineProvider),
+    networkStatus: ref.watch(networkStatusServiceProvider),
   ),
 );
 
@@ -147,6 +152,15 @@ final unreadNotificationsCountProvider = StreamProvider<int>(
   (ref) => ref.watch(notificationsRepositoryProvider).watchUnreadCount(),
 );
 
+/// يربط `AuthRepository.endSession` بـ `SyncEngine.awaitIdle` دون أن يعتمد
+/// `AuthRepository` نفسه على `SyncEngine` مباشرة (تجنّبًا لاعتماد دائري:
+/// `syncEngineProvider` أدناه يعتمد بالفعل على `authRepositoryProvider`
+/// لـ `ensureFreshSession`). راجع `home_drawer.dart`/`user_profile_screen.dart`
+/// لنقطتي الاستدعاء الفعليتين.
+final syncEngineIdleWaiterProvider = Provider<Future<void> Function()>((ref) {
+  return () => ref.read(syncEngineProvider).awaitIdle();
+});
+
 // ───────────────────────── محرّك المزامنة ─────────────────────────
 
 /// الجهة الوحيدة التي تُفرّغ [syncQueueProvider] فعليًا — راجع
@@ -157,8 +171,8 @@ final syncEngineProvider = Provider<SyncEngine>((ref) {
     casesApi: ref.watch(casesApiProvider),
     workflowApi: ref.watch(workflowApiProvider),
     notificationsApi: ref.watch(notificationsApiProvider),
-    ensureFreshSession: () =>
-        ref.read(authRepositoryProvider).canFlushSyncQueue(),
+    networkStatus: ref.watch(networkStatusServiceProvider),
+    ensureFreshSession: () => ref.read(tokenStoreProvider).canFlushSyncQueue(),
     uploadAttachmentsForCase: (caseId) =>
         ref.watch(attachmentUploaderProvider).uploadAllForCase(caseId),
     submitPendingVisitsForCase: (caseId) async {
@@ -191,9 +205,12 @@ final runSyncProvider = Provider<Future<SyncFlushResult> Function()>((ref) {
 /// يُبنى ويبدأ الاستماع؛ لا يُستخدَم ناتجه مباشرة. منفصل عن [runSyncProvider]
 /// نفسه لأن محفّز "عودة الاتصال" منطق مستقل عن تنفيذ التفريغ ذاته.
 final autoSyncOnReconnectProvider = Provider<void>((ref) {
-  final subscription = ref.watch(connectivityProvider).onRestored.listen((_) {
-    ref.read(runSyncProvider)();
-  });
+  final subscription = ref
+      .watch(networkStatusServiceProvider)
+      .onRestored
+      .listen((_) {
+        ref.read(runSyncProvider)();
+      });
   ref.onDispose(subscription.cancel);
 });
 
@@ -204,7 +221,7 @@ final startupServiceProvider = Provider<StartupService>(
     fieldVisits: ref.watch(fieldVisitsRepositoryProvider),
     reference: ref.watch(referenceRepositoryProvider),
     cases: ref.watch(casesRepositoryProvider),
-    connectivity: ref.watch(connectivityProvider),
+    networkStatus: ref.watch(networkStatusServiceProvider),
     db: ref.watch(appDatabaseProvider),
     runSync: ref.watch(runSyncProvider),
   ),

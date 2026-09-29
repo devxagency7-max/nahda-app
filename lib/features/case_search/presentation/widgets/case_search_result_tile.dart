@@ -2,17 +2,25 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
-import '../../../../core/widgets/priority_badge.dart';
+import '../../../cases/domain/case_status.dart';
 import '../../domain/case_search_result.dart';
 
 class CaseSearchResultTile extends StatelessWidget {
   final CaseSearchResult result;
   final VoidCallback onTap;
 
+  /// `null` أثناء استدعاء "تكليف" على هذه البطاقة تحديدًا — تعطّل الزر
+  /// وتعرض مؤشر تحميل بدلًا من نصه. `onAccept` نفسها `null` تعني "لا تعرض
+  /// الزر أصلًا" — تُستخدم من الشاشة الأب لإخفائه أثناء استدعاء بطاقة أخرى.
+  final VoidCallback? onAccept;
+  final bool isAccepting;
+
   const CaseSearchResultTile({
     super.key,
     required this.result,
     required this.onTap,
+    this.onAccept,
+    this.isAccepting = false,
   });
 
   @override
@@ -57,12 +65,6 @@ class CaseSearchResultTile extends StatelessWidget {
                     ],
                   ),
                 ),
-                PriorityBadge(priority: result.priority),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
                 Text(
                   result.statusLabel,
                   style: const TextStyle(
@@ -71,8 +73,12 @@ class CaseSearchResultTile extends StatelessWidget {
                     color: AppColors.primary,
                   ),
                 ),
-                if (result.village != null) ...[
-                  const Text(' • ', style: TextStyle(color: AppColors.textMuted)),
+              ],
+            ),
+            if (result.village != null) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
                   Text(
                     result.village!,
                     style: const TextStyle(
@@ -82,8 +88,8 @@ class CaseSearchResultTile extends StatelessWidget {
                     ),
                   ),
                 ],
-              ],
-            ),
+              ),
+            ],
             if (result.charity != null) ...[
               const SizedBox(height: 4),
               Row(
@@ -104,7 +110,46 @@ class CaseSearchResultTile extends StatelessWidget {
                 ],
               ),
             ],
-            if (result.isAssignedToCurrentWorker == false) ...[
+            if (result.status == CaseStatus.pendingAssignment) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'متاحة للتكليف — لم تُسند لأخصائي بعد',
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.warning,
+                      ),
+                    ),
+                  ),
+                  if (onAccept != null)
+                    SizedBox(
+                      height: 30,
+                      child: FilledButton.icon(
+                        onPressed: isAccepting ? null : onAccept,
+                        icon: isAccepting
+                            ? const SizedBox(
+                                width: 12,
+                                height: 12,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.assignment_ind_outlined, size: 14),
+                        label: const Text(
+                          'تكليف',
+                          style: TextStyle(fontSize: 11.5),
+                        ),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ] else if (result.isAssignedToCurrentWorker == false) ...[
               Row(
                 children: [
                   const Icon(

@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/network/api_exception.dart';
+import '../../../core/providers/data_providers.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/widgets/app_background.dart';
 import '../../case_details/presentation/case_details_screen.dart';
+import '../../cases/domain/case_status.dart';
 import '../../home/domain/case_priority.dart';
+import '../../home/presentation/home_providers.dart';
 import '../domain/case_search_filter.dart';
 import 'case_search_providers.dart';
 import 'widgets/advanced_search_filter_sheet.dart';
@@ -77,17 +81,23 @@ class _CaseSearchScreenState extends ConsumerState<CaseSearchScreen> {
   final _focusNode = FocusNode();
   SearchCategory _selectedCategory = SearchCategory.name;
 
+  /// معرّف الحالة التي يجري تكليفها لنفس الأخصائي الآن — `null` يعني لا شيء
+  /// قيد التنفيذ. بطاقة واحدة فقط تُعطَّل في كل مرة.
+  String? _acceptingCaseId;
+
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.initialQuery ?? '');
     if (widget.initialQuery != null && widget.initialQuery!.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        ref.read(caseSearchQueryProvider.notifier).state = widget.initialQuery!;
+        if (mounted) {
+          ref.read(caseSearchQueryProvider.notifier).state = widget.initialQuery!;
+        }
       });
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _focusNode.requestFocus();
+      if (mounted) _focusNode.requestFocus();
     });
   }
 
@@ -225,7 +235,7 @@ class _CaseSearchScreenState extends ConsumerState<CaseSearchScreen> {
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
                   itemCount: SearchCategory.values.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
+                  separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.sm),
                   itemBuilder: (context, index) {
                     final cat = SearchCategory.values[index];
                     final isSelected = cat == _selectedCategory;
@@ -491,7 +501,7 @@ class _CaseSearchScreenState extends ConsumerState<CaseSearchScreen> {
 
     return resultsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, _) => const _SearchError(),
+      error: (_, __) => const _SearchError(),
       data: (results) {
         if (results.isEmpty) {
           return _NoResults(onCreateNew: () => _openNewCase(context));
@@ -502,11 +512,15 @@ class _CaseSearchScreenState extends ConsumerState<CaseSearchScreen> {
             vertical: AppSpacing.sm,
           ),
           itemCount: results.length,
-          separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.sm),
+          separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
           itemBuilder: (context, index) {
             final result = results[index];
             return CaseSearchResultTile(
               result: result,
+              onAccept: result.status == CaseStatus.pendingAssignment
+                  ? () => _acceptCaseFromSearch(result.id)
+                  : null,
+              isAccepting: _acceptingCaseId == result.id,
               onTap: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(
@@ -524,6 +538,45 @@ class _CaseSearchScreenState extends ConsumerState<CaseSearchScreen> {
         );
       },
     );
+  }
+
+  /// تكليف حالة `pendingAssignment` لنفس الأخصائي مباشرة من نتائج البحث —
+  /// نفس منطق زر "تكليف" في شاشة التفاصيل (`CaseDetailsScreen._acceptAssignment`)،
+  /// لكن دون فتحها أولًا. الكاش المحلي لهذه الحالة قد يكون فارغًا (نتيجة بحث
+  /// لم تُفتح تفاصيلها بعد)، لذا `refreshCaseDetails` أولًا إلزامي هنا، خلاف
+  /// شاشة التفاصيل حيث يحدث ذلك بالفعل عند فتح الشاشة.
+  Future<void> _acceptCaseFromSearch(String caseId) async {
+    if (_acceptingCaseId != null) return;
+    setState(() => _acceptingCaseId = caseId);
+    final messenger = ScaffoldMessenger.of(context);
+    final repo = ref.read(casesRepositoryProvider);
+    try {
+      await repo.refreshCaseDetails(caseId);
+      await repo.acceptAssignment(caseId);
+      if (!mounted) return;
+      ref.invalidate(caseSearchResultsProvider);
+      ref.invalidate(homeDataProvider);
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('تم تكليفك بالحالة')));
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              e.isConflict
+                  ? 'الحالة دي اتكلف بيها أخصائي تاني أو اتغيرت، هنحدّث البيانات'
+                  : e.displayMessage,
+            ),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      ref.invalidate(caseSearchResultsProvider);
+    } finally {
+      if (mounted) setState(() => _acceptingCaseId = null);
+    }
   }
 
   void _openNewCase(BuildContext context) {

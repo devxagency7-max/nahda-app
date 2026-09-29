@@ -12,18 +12,9 @@ class AppConfig {
   const AppConfig._();
 
   /// عنوان الـ API الأساسي. يتضمن `/api/v1` — لا يُضاف في الـ endpoints.
-  ///
-  /// ⚠️ **القيمة الحالية `http://` لا `https://`** — بيانات مستفيدين حقيقية
-  /// (رقم قومي، دخل، حالة صحية، هاتف) تنتقل حاليًا **نصًّا صريحًا على
-  /// الشبكة**، وأي جهاز على نفس الشبكة (نقطة اتصال عامة، شبكة الجمعية) يمكنه
-  /// قراءتها. هذا خطر أمني حقيقي لا افتراضي — تخزين التوكنات في Keychain/
-  /// Keystore (§`secure_token_store.dart`) لا يحمي بيانات في طريقها على
-  /// السلك. **يجب أن يتحوّل هذا العنوان لـ `https://` قبل أي استخدام إنتاجي
-  /// فعلي** — تغيير على مستوى البنية التحتية (شهادة TLS + reverse proxy)،
-  /// لا شيء يُصلَح من طرف التطبيق. راجَع مع فريق الباك إند/DevOps.
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://187.77.70.246/api/v1',
+    defaultValue: 'https://srv1990155.hstgr.cloud/api/v1',
   );
 
   static const String _envName = String.fromEnvironment(

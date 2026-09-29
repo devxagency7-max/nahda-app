@@ -1,8 +1,8 @@
 import '../../features/cases/data/cases_repository.dart';
 import '../../features/field_visits/data/field_visits_repository.dart';
 import '../../features/reference/data/reference_repository.dart';
+import '../network/network_status_service.dart';
 import '../storage/app_database.dart';
-import 'connectivity_monitor.dart';
 import 'sync_engine.dart';
 
 /// نتيجة تهيئة بدء التشغيل.
@@ -36,20 +36,20 @@ class StartupService {
     required FieldVisitsRepository fieldVisits,
     required ReferenceRepository reference,
     required CasesRepository cases,
-    required ConnectivityMonitor connectivity,
+    required NetworkStatusService networkStatus,
     required AppDatabase db,
     required Future<SyncFlushResult> Function() runSync,
   }) : _fieldVisits = fieldVisits,
        _reference = reference,
        _cases = cases,
-       _connectivity = connectivity,
+       _networkStatus = networkStatus,
        _db = db,
        _runSync = runSync;
 
   final FieldVisitsRepository _fieldVisits;
   final ReferenceRepository _reference;
   final CasesRepository _cases;
-  final ConnectivityMonitor _connectivity;
+  final NetworkStatusService _networkStatus;
   final AppDatabase _db;
 
   /// يُفرّغ `sync_queue` عبر `SyncEngine` — مُمرَّر من الخارج (لا يُبنى
@@ -58,8 +58,13 @@ class StartupService {
   final Future<SyncFlushResult> Function() _runSync;
 
   /// يُستدعى مرة بعد استعادة الجلسة أو تسجيل الدخول.
+  ///
+  /// **حاسم:** يعتمد على فحص فوري طازج ([NetworkStatusService.checkNow]) لا
+  /// على آخر حالة معروفة فقط — لحظة فتح التطبيق هي اللحظة التي يُبنى عليها
+  /// قرار "أونلاين أم أوفلاين" لكامل الجلسة، فوجود واجهة شبكة بلا إنترنت
+  /// فعلي (بوابة مقيّدة، شبكة بلا خدمة) لا يجوز أن يُعامَل كأونلاين.
   Future<StartupResult> run() async {
-    final online = (await _connectivity.refresh()).isOnline;
+    final online = (await _networkStatus.checkNow()).isOnline;
 
     if (online) {
       // أولًا وقبل كل شيء: هل هناك زيارة لا نعرف إن وصلت؟
@@ -87,7 +92,7 @@ class StartupService {
   ///
   /// أخفّ من [run]: لا يُعيد جلب البيانات المرجعية إلا إن قدُمت.
   Future<void> onResume() async {
-    if (!(await _connectivity.refresh()).isOnline) return;
+    if (!(await _networkStatus.checkNow()).isOnline) return;
 
     await _fieldVisits.reconcileStuckVisits();
     await _runSync();
@@ -102,7 +107,7 @@ class StartupService {
   Future<StartupResult> prepareForFieldWork({
     void Function(String step, int done, int total)? onProgress,
   }) async {
-    final online = (await _connectivity.refresh()).isOnline;
+    final online = (await _networkStatus.checkNow()).isOnline;
     if (!online) {
       return StartupResult(
         isOfflineReady: await _reference.isReadyForOfflineWork(),

@@ -10,9 +10,9 @@ import '../domain/case_search_result.dart';
 /// بحث حقيقي عبر `GET /search/cases` — يستبدل مصدر البيانات الوهمي السابق
 /// بدون أي تغيير في الواجهة (نفس عقد [CaseSearchRepository]).
 ///
-/// `GET /search/cases` (`CaseListItemDto`) لا يرجّع اسم القرية أو الجمعية أو
-/// رقم الهاتف أو اسم الأخصائي المسنَد — نتركها `null` بدل اختلاقها؛ بطاقة
-/// النتيجة (`CaseSearchResultTile`) بالفعل تُخفي أي قسم قيمته `null`.
+/// `GET /search/cases` (`CaseListItemDto`) لا يرجّع اسم الأخصائي المسنَد —
+/// نتركها `null` بدل اختلاقها؛ بطاقة النتيجة (`CaseSearchResultTile`) بالفعل
+/// تُخفي أي قسم قيمته `null`.
 class ApiCaseSearchRepository implements CaseSearchRepository {
   ApiCaseSearchRepository(this._repository);
 
@@ -61,13 +61,14 @@ class ApiCaseSearchRepository implements CaseSearchRepository {
       displayId: '#${dto.displayId}',
       personName: dto.beneficiaryFullName,
       nationalId: dto.nationalId,
-      village: null,
-      charity: null,
-      phone: null,
+      village: dto.villageName,
+      charity: dto.charityName,
+      phone: dto.phonePrimary,
       registeredAt: dto.registrationDate == null
           ? null
           : DateTime.tryParse(dto.registrationDate!),
       statusLabel: _workStatus(dto).label,
+      status: dto.status,
       priority: _priority(dto.priority),
       assignedWorkerName: null,
       isAssignedToCurrentWorker: null,
@@ -91,12 +92,19 @@ class ApiCaseSearchRepository implements CaseSearchRepository {
         if (dto.isComplete) return CaseWorkStatus.readyForReview;
         return CaseWorkStatus.inProgress;
       case CaseStatus.pendingReview:
-      case CaseStatus.pendingApproval:
-      case CaseStatus.approved:
-      case CaseStatus.rejected:
         return CaseWorkStatus.submittedForReview;
-      case CaseStatus.draft:
+      case CaseStatus.pendingApproval:
+        return CaseWorkStatus.pendingApproval;
+      case CaseStatus.approved:
+        return CaseWorkStatus.approved;
+      case CaseStatus.rejected:
+        return CaseWorkStatus.rejected;
       case CaseStatus.pendingAssignment:
+        return CaseWorkStatus.pendingAssignment;
+
+      case CaseStatus.draft:
+        return CaseWorkStatus.draft;
+
       case CaseStatus.unknown:
         return CaseWorkStatus.assigned;
     }

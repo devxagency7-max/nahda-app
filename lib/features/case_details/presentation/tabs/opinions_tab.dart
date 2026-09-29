@@ -26,13 +26,74 @@ class OpinionsTab extends StatefulWidget {
 }
 
 class _OpinionsTabState extends State<OpinionsTab> {
-  late final OpinionsFormData _data = widget.initialData;
+  late OpinionsFormData _data = widget.initialData;
 
   late final _reportCtrl = TextEditingController(
     text: _data.socialWorker.detailedReport ?? '',
   );
 
+  /// `initialData` يوصل فاضيًا أول مرة (`CaseDetailsScreen` بيبني الفورم
+  /// بمحتوى مبدئي فاضٍ قبل ما يخلص تحميل الكاش المحلي غير المتزامن)، وبعد
+  /// كده يوصل تاني بالبيانات الحقيقية عبر إعادة بناء بـ **نسخة جديدة تمامًا**
+  /// من `OpinionsFormData` — `late final` في الأعلى كانت بتتجاهل الوصول ده
+  /// لأنها بتتحسب مرة واحدة بس عند إنشاء الـ State، فلو التاب اتبنى قبل
+  /// اكتمال التحميل (شائع لأنه آخر تاب، بعيد عن نطاق التخزين المؤقت لـ
+  /// `TabBarView`) كان يفضل فاضي للأبد.
+  ///
+  /// **بالهوية (`identical`) مش بالمحتوى**: أي round-trip عادي (المستخدم
+  /// بيكتب → `_notify` → `onChanged` → الأب بيعمل `setState`) بيرجّع لنا
+  /// نفس الكائن (`_data` اتعدّلت في مكانها)، فمفيش إعادة مزامنة كاذبة تمسح
+  /// حاجة بيكتبها المستخدم دلوقتي.
+  @override
+  void didUpdateWidget(covariant OpinionsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.initialData, widget.initialData)) {
+      _data = widget.initialData;
+      _reportCtrl.text = _data.socialWorker.detailedReport ?? '';
+    }
+  }
+
   void _notify() => setState(() => widget.onChanged(_data));
+
+  /// الرأي المختصر للمراجع — `null` طالما مسودة غير مُرسَلة (`isSubmitted ==
+  /// false`)، فلا نعرض قرارًا لم يُقرَّر نهائيًا بعد (رد الباك إند طلب 14، §2).
+  String? get _reviewerBriefValue {
+    final reviewer = _data.reviewer;
+    if (reviewer == null || !reviewer.isSubmitted) return null;
+    return reviewer.briefOpinion;
+  }
+
+  String? get _reviewerNotes {
+    final reviewer = _data.reviewer;
+    if (reviewer == null || !reviewer.isSubmitted) return null;
+    return reviewer.notes;
+  }
+
+  /// كارت الرأي السابق (View-only) — يُعرض فقط لو وصل فعليًا رأي أخصائي
+  /// سابق للسيرفر (`decision` أو `notes` أو `detailedReport` موجود)، بصرف
+  /// النظر عن `isSubmitted` (رد المزامنة قد لا يعيدها صراحة).
+  PreviousWorkerOpinionCardData? get _previousOpinion {
+    final previous = _data.previousWorkerOpinion;
+    if (previous == null) return null;
+    final hasDetails = previous.detailedReport?.isNotEmpty ?? false;
+    if (previous.decision == null &&
+        (previous.notes ?? '').trim().isEmpty &&
+        !hasDetails) {
+      return null;
+    }
+    return previous;
+  }
+
+  /// "آخر رأي أُرسِل: مقبول — 20/9/2026" — `null` طالما لم يُرسَل رأي بعد
+  /// (submittedAtUtc فاضي، أي مجرد مسودة محلية لم تصل للسيرفر).
+  String? get _submittedHint {
+    final submittedAt = _data.socialWorker.submittedAtUtc;
+    if (submittedAt == null) return null;
+    final local = submittedAt.toLocal();
+    final date =
+        '${local.day}/${local.month}/${local.year}';
+    return 'آخر رأي أُرسِل: ${_data.socialWorker.briefOpinion} — $date';
+  }
 
   @override
   void dispose() {
@@ -49,34 +110,50 @@ class _OpinionsTabState extends State<OpinionsTab> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final isWide = constraints.maxWidth > 700;
-              final cards = [
-                _OpinionCard(
-                  title: 'رأي الأخصائي',
-                  icon: Icons.badge_outlined,
-                  color: AppColors.primary,
-                  editable: true,
-                  briefValue: _data.socialWorker.briefOpinion,
-                  briefOptions: _socialWorkerOpinions,
-                  onBriefChanged: (v) {
-                    _data.socialWorker.briefOpinion = v;
-                    _notify();
-                  },
-                  reportController: _reportCtrl,
-                  reportHint: 'التقرير التفصيلي...',
-                  onReportChanged: (v) {
-                    _data.socialWorker.detailedReport = v;
-                    _notify();
-                  },
-                ),
+
+              final writableWorkerCard = _OpinionCard(
+                title: 'رأي الأخصائي',
+                icon: Icons.badge_outlined,
+                color: AppColors.primary,
+                editable: true,
+                briefValue: _data.socialWorker.briefOpinion,
+                briefOptions: _socialWorkerOpinions,
+                onBriefChanged: (v) {
+                  _data.socialWorker.briefOpinion = v;
+                  _notify();
+                },
+                reportController: _reportCtrl,
+                reportHint: 'التقرير التفصيلي...',
+                onReportChanged: (v) {
+                  _data.socialWorker.detailedReport = v;
+                  _notify();
+                },
+                submittedHint: _submittedHint,
+              );
+
+              final previousOpinion = _previousOpinion;
+              final workerColumn = Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  writableWorkerCard,
+                  if (previousOpinion != null) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    _PreviousWorkerOpinionCard(data: previousOpinion),
+                  ],
+                ],
+              );
+
+              final otherCards = [
                 _OpinionCard(
                   title: 'رأي المراجع',
                   icon: Icons.search,
                   color: AppColors.warning,
                   editable: false,
-                  briefValue: _data.reviewer?.briefOpinion,
-                  briefPlaceholder: 'لم تتم المراجعة بعد',
-                  reportPlaceholder:
-                      _data.reviewer?.notes ?? 'ملاحظات المراجعة...',
+                  briefValue: _reviewerBriefValue,
+                  briefPlaceholder: _data.reviewer == null
+                      ? 'لم تتم المراجعة بعد'
+                      : 'مسودة محفوظة — لم تُرسَل بعد',
+                  reportPlaceholder: _reviewerNotes ?? 'ملاحظات المراجعة...',
                 ),
                 _OpinionCard(
                   title: 'رأي مدير التنمية',
@@ -86,8 +163,7 @@ class _OpinionsTabState extends State<OpinionsTab> {
                   briefValue: _data.director?.finalDecision,
                   briefPlaceholder: 'اختر القرار...',
                   reportPlaceholder:
-                      _data.director?.approvalOrRejectionNote ??
-                      'التعليق النهائي للمدير...',
+                      _data.director?.notes ?? 'التعليق النهائي للمدير...',
                 ),
               ];
 
@@ -95,24 +171,38 @@ class _OpinionsTabState extends State<OpinionsTab> {
                   ? Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        for (int i = 0; i < cards.length; i++) ...[
-                          if (i > 0) const SizedBox(width: AppSpacing.md),
-                          Expanded(child: cards[i]),
+                        Expanded(child: workerColumn),
+                        for (final card in otherCards) ...[
+                          const SizedBox(width: AppSpacing.md),
+                          Expanded(child: card),
                         ],
                       ],
                     )
                   : Column(
                       children: [
-                        for (int i = 0; i < cards.length; i++) ...[
-                          if (i > 0) const SizedBox(height: AppSpacing.md),
-                          cards[i],
+                        workerColumn,
+                        for (final card in otherCards) ...[
+                          const SizedBox(height: AppSpacing.md),
+                          card,
                         ],
                       ],
                     );
 
               return SingleChildScrollView(
                 padding: const EdgeInsets.all(AppSpacing.lg),
-                child: content,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_data.returnReason != null) ...[
+                      _ReturnReasonBanner(
+                        reason: _data.returnReason!,
+                        byLabel: _data.returnedByLabel,
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                    ],
+                    content,
+                  ],
+                ),
               );
             },
           ),
@@ -136,6 +226,11 @@ class _OpinionCard extends StatelessWidget {
   final String? reportPlaceholder;
   final ValueChanged<String>? onReportChanged;
 
+  /// تلميح "آخر رأي أُرسِل" — يظهر فوق حقل الرأي المختصر في الكارت القابل
+  /// للتعديل فقط، `null` طالما لم يُرسَل رأي بعد. لا يمنع التعديل ولا
+  /// إعادة الإرسال، مجرد تأكيد بصري لآخر رأي وصل فعليًا للسيرفر.
+  final String? submittedHint;
+
   const _OpinionCard({
     required this.title,
     required this.icon,
@@ -149,6 +244,7 @@ class _OpinionCard extends StatelessWidget {
     this.reportHint,
     this.reportPlaceholder,
     this.onReportChanged,
+    this.submittedHint,
   });
 
   @override
@@ -177,6 +273,17 @@ class _OpinionCard extends StatelessWidget {
               ),
             ],
           ),
+          if (submittedHint != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              submittedHint!,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: color.withValues(alpha: 0.85),
+              ),
+            ),
+          ],
           const SizedBox(height: AppSpacing.lg),
           const Text(
             'الرأي المختصر',
@@ -222,6 +329,170 @@ class _OpinionCard extends StatelessWidget {
               placeholder: reportPlaceholder ?? '—',
               minHeight: 90,
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// تسميات عربية لحقول `detailedReport` (١٣ حقل حر لا يتحقق منه الخادم) —
+/// راجع توثيق `POST /opinions/worker`. حقل غير معروف يُعرض بمفتاحه الخام
+/// بدل إخفائه بصمت.
+const _detailedReportLabels = {
+  'familySituation': 'الوضع الأسري',
+  'economicSituation': 'الوضع الاقتصادي',
+  'housingSituation': 'الوضع السكني',
+  'strengths': 'نقاط القوة',
+  'mainProblems': 'المشاكل الرئيسية',
+  'overallAssessment': 'التقييم العام',
+  'needLevel': 'مستوى الاحتياج',
+  'opinion': 'الرأي',
+  'caseSummary': 'ملخص الحالة',
+  'assessment': 'التقييم',
+  'reasons': 'الأسباب',
+  'recommendation': 'التوصية',
+  'additionalNotes': 'ملاحظات إضافية',
+};
+
+/// كارت "الرأي السابق" — View-only بالكامل، يُعرض بجانب كارت كتابة رأي
+/// الأخصائي دائمًا طالما وصل رأي فعليًا للسيرفر من قبل (§ [PreviousWorkerOpinionCardData]).
+/// لا يُتاح فيه أي تعديل ولا يتأثر بما يكتبه الأخصائي في الكارت الآخر.
+class _PreviousWorkerOpinionCard extends StatelessWidget {
+  final PreviousWorkerOpinionCardData data;
+
+  const _PreviousWorkerOpinionCard({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final report = data.detailedReport;
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceMuted,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: AppColors.border, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(
+                Icons.history_edu_outlined,
+                size: 18,
+                color: AppColors.textMuted,
+              ),
+              SizedBox(width: 6),
+              Text(
+                'الرأي السابق',
+                style: TextStyle(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.textMuted,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          const Text(
+            'الرأي المختصر',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textMuted,
+            ),
+          ),
+          const SizedBox(height: 6),
+          _ReadOnlyField(value: data.briefOpinion, placeholder: '—'),
+          if ((data.notes ?? '').trim().isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.sm),
+            const Text(
+              'ملاحظات',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textMuted,
+              ),
+            ),
+            const SizedBox(height: 6),
+            _ReadOnlyField(
+              value: data.notes,
+              placeholder: '—',
+              minHeight: 60,
+            ),
+          ],
+          if (report != null && report.isNotEmpty)
+            for (final entry in report.entries)
+              if ((entry.value?.toString().trim().isNotEmpty ?? false)) ...[
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  _detailedReportLabels[entry.key] ?? entry.key,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                _ReadOnlyField(
+                  value: entry.value.toString(),
+                  placeholder: '—',
+                  minHeight: 44,
+                ),
+              ],
+        ],
+      ),
+    );
+  }
+}
+
+/// يعرض سبب رجوع الحالة الحالي، من `returnInfo` (مصدر الحقيقة الوحيد
+/// المضمون — يفضل يشتغل حتى لو رأي المراجع اتمسح بعد رجوع من المدير).
+class _ReturnReasonBanner extends StatelessWidget {
+  final String reason;
+  final String? byLabel;
+
+  const _ReturnReasonBanner({required this.reason, this.byLabel});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.danger.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: AppColors.danger.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.undo_rounded, size: 18, color: AppColors.danger),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  byLabel ?? 'مرتجعة إليك',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.danger,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  reason,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

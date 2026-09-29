@@ -61,38 +61,38 @@ class ApiException implements Exception {
 
   String get _fallbackMessage => switch (code) {
     ApiErrorCode.offline =>
-      'لا يوجد اتصال بالإنترنت. تم حفظ عملك على الجهاز وسيُرفَع تلقائيًا عند عودة الاتصال.',
+      'يظهر إن النت مقطوع عندك دلوقتي، بس متقلقش — شغلك محفوظ على جهازك وهيتبعت لوحده أول ما النت يرجع.',
     ApiErrorCode.timeout =>
-      'انتهت مهلة الاتصال. تحقق من الشبكة وحاول مرة أخرى.',
+      'النت بطيء شوية ومقدرناش نكمل الطلب. جرّب تاني.',
     ApiErrorCode.invalidCredentials =>
-      'البريد الإلكتروني أو كلمة المرور غير صحيحة.',
+      'الإيميل أو الباسورد مش مظبوط، جرّب تاني.',
     ApiErrorCode.accountLocked =>
-      'تم قفل الحساب مؤقتًا بعد عدة محاولات خاطئة. حاول بعد ١٥ دقيقة.',
+      'الحساب اتقفل مؤقتًا بعد كذا محاولة غلط. استنى ربع ساعة وجرّب تاني.',
     ApiErrorCode.platformNotAllowed =>
-      'هذا التطبيق مخصص للأخصائيين الاجتماعيين فقط.',
+      'التطبيق ده مخصوص للأخصائيين الاجتماعيين بس.',
     ApiErrorCode.socialWorkerWebBlocked =>
-      'لا يمكن تنفيذ هذا الإجراء من خارج تطبيق الموبايل.',
+      'الإجراء ده متاح بس من تطبيق الموبايل.',
     ApiErrorCode.rateLimited =>
-      'عدد المحاولات كبير. انتظر قليلًا ثم حاول مرة أخرى.',
-    ApiErrorCode.forbidden => 'ليس لديك صلاحية لتنفيذ هذا الإجراء.',
-    ApiErrorCode.caseNotFound => 'الحالة غير موجودة.',
-    ApiErrorCode.notFound => 'العنصر المطلوب غير موجود.',
+      'حاولت كذا مرة على طول، استنى شوية وجرّب تاني.',
+    ApiErrorCode.forbidden => 'معندكش صلاحية تعمل الإجراء ده.',
+    ApiErrorCode.caseNotFound => 'الحالة دي مش موجودة.',
+    ApiErrorCode.notFound => 'اللي بتدور عليه مش موجود.',
     ApiErrorCode.concurrencyConflict =>
-      'تم تعديل هذه الحالة من جهة أخرى. راجع التعديلات قبل الحفظ.',
+      'حد تاني عدّل في الحالة دي قبلك. راجع التعديلات قبل ما تحفظ.',
     ApiErrorCode.invalidStatusTransition =>
-      'لم يعد هذا الإجراء متاحًا — تغيّرت حالة الملف.',
-    ApiErrorCode.opinionSlotLocked => 'تم إرسال الرأي مسبقًا ولا يمكن تعديله.',
-    ApiErrorCode.caseAlreadyApproved => 'تم اعتماد هذه الحالة نهائيًا.',
-    ApiErrorCode.validationError => 'يوجد خطأ في البيانات المُدخَلة.',
-    ApiErrorCode.duplicateNationalId => 'يوجد حالة مسجلة بالفعل بهذا الرقم القومي.',
-    ApiErrorCode.duplicateResource => 'هذا العنصر مسجل بالفعل.',
-    ApiErrorCode.fileTooLarge => 'حجم الملف يتجاوز ١٠ ميجابايت.',
-    ApiErrorCode.unsupportedFileType => 'نوع الملف غير مدعوم.',
+      'الإجراء ده بقى مش متاح — حالة الملف اتغيّرت.',
+    ApiErrorCode.opinionSlotLocked => 'الرأي اتبعت خلاص ومينفعش يتعدّل.',
+    ApiErrorCode.caseAlreadyApproved => 'الحالة دي اتاعتمدت خلاص بشكل نهائي.',
+    ApiErrorCode.validationError => 'في حاجة غلط في البيانات اللي دخلتها.',
+    ApiErrorCode.duplicateNationalId => 'في حالة مسجّلة خلاص بنفس الرقم القومي ده.',
+    ApiErrorCode.duplicateResource => 'العنصر ده مسجّل خلاص.',
+    ApiErrorCode.fileTooLarge => 'حجم الملف أكبر من ١٠ ميجا، صغّره وجرّب تاني.',
+    ApiErrorCode.unsupportedFileType => 'نوع الملف ده مش مدعوم.',
     ApiErrorCode.storageUnavailable =>
-      'خدمة رفع الملفات غير متاحة حاليًا. سيُعاد المحاولة تلقائيًا.',
-    ApiErrorCode.internalError => 'حدث خطأ في الخادم. حاول مرة أخرى.',
-    ApiErrorCode.idempotencyKeyRequired => 'خطأ فني في الطلب.',
-    _ => 'حدث خطأ غير متوقع. حاول مرة أخرى.',
+      'خدمة رفع الملفات مش شغالة دلوقتي. هنعيد المحاولة لوحدنا.',
+    ApiErrorCode.internalError => 'حصلت مشكلة من عندنا، جرّب تاني كمان شوية.',
+    ApiErrorCode.idempotencyKeyRequired => 'في مشكلة فنية بسيطة في الطلب.',
+    _ => 'حصل خطأ مش متوقع، جرّب تاني.',
   };
 
   ApiException copyWith({ApiErrorCode? code, String? message}) => ApiException(

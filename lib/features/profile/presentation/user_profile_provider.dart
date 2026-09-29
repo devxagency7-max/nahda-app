@@ -1,134 +1,103 @@
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../../auth/domain/auth_user.dart';
+import '../../../core/network/api_exception.dart';
+import '../../../core/providers/app_providers.dart';
 import '../../auth/presentation/auth_controller.dart';
+import '../data/profile_api.dart';
+import '../data/profile_dto.dart';
+import '../data/profile_repository.dart';
 
-class UserProfileData {
-  final String name;
-  final String email;
-  final String gender;
-  final String phone;
-  final String region;
-  final String? imagePath;
-  final String avatarEmoji;
+final profileApiProvider = Provider<ProfileApi>(
+  (ref) => ProfileApi(ref.watch(apiClientProvider)),
+);
 
-  const UserProfileData({
-    required this.name,
-    required this.email,
-    required this.gender,
-    required this.phone,
-    required this.region,
-    this.imagePath,
-    this.avatarEmoji = '👨‍💼',
-  });
+final profileRepositoryProvider = Provider<ProfileRepository>(
+  (ref) => ProfileRepository(api: ref.watch(profileApiProvider)),
+);
 
-  UserProfileData copyWith({
-    String? name,
-    String? email,
-    String? gender,
-    String? phone,
-    String? region,
-    String? imagePath,
-    String? avatarEmoji,
-  }) {
-    return UserProfileData(
-      name: name ?? this.name,
-      email: email ?? this.email,
-      gender: gender ?? this.gender,
-      phone: phone ?? this.phone,
-      region: region ?? this.region,
-      imagePath: imagePath ?? this.imagePath,
-      avatarEmoji: avatarEmoji ?? this.avatarEmoji,
-    );
-  }
-}
-
-class UserProfileNotifier extends StateNotifier<UserProfileData> {
-  UserProfileNotifier({AuthUser? user})
-      : super(
-          UserProfileData(
-            name: user?.fullName ?? '',
-            email: user?.email ?? '',
-            gender: '',
-            phone: '',
-            region: '',
-          ),
-        );
-
-  void updateName(String newName) {
-    if (newName.trim().isNotEmpty) {
-      state = state.copyWith(name: newName.trim());
-    }
-  }
-
-  void updateEmail(String newEmail) {
-    if (newEmail.trim().isNotEmpty) {
-      state = state.copyWith(email: newEmail.trim());
-    }
-  }
-
-  void updateGender(String newGender) {
-    if (newGender.trim().isNotEmpty) {
-      state = state.copyWith(gender: newGender.trim());
-    }
-  }
-
-  void updatePhone(String newPhone) {
-    if (newPhone.trim().isNotEmpty) {
-      state = state.copyWith(phone: newPhone.trim());
-    }
-  }
-
-  void updateRegion(String newRegion) {
-    if (newRegion.trim().isNotEmpty) {
-      state = state.copyWith(region: newRegion.trim());
-    }
-  }
-
-  void updateEmoji(String emoji) {
-    state = state.copyWith(avatarEmoji: emoji, imagePath: null);
-  }
-
-  Future<bool> pickImageFromGallery() async {
-    try {
-      final picker = ImagePicker();
-      final XFile? pickedFile = await picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 600,
-        maxHeight: 600,
-        imageQuality: 85,
-      );
-
-      if (pickedFile != null) {
-        state = state.copyWith(imagePath: pickedFile.path);
-        return true;
-      }
-    } catch (_) {}
-    return false;
-  }
-
-  Future<bool> pickImageFromCamera() async {
-    try {
-      final picker = ImagePicker();
-      final XFile? pickedFile = await picker.pickImage(
-        source: ImageSource.camera,
-        maxWidth: 600,
-        maxHeight: 600,
-        imageQuality: 85,
-      );
-
-      if (pickedFile != null) {
-        state = state.copyWith(imagePath: pickedFile.path);
-        return true;
-      }
-    } catch (_) {}
-    return false;
-  }
-}
-
+/// حالة شاشة البروفايل — **أونلاين فقط**، لا كاش محلي (راجع توثيق
+/// [ProfileRepository]). الفشل يُترجَم إلى [AsyncError] فتعرضه الشاشة
+/// صراحةً، لا بيانات قديمة صامتة.
 final userProfileProvider =
-    StateNotifierProvider<UserProfileNotifier, UserProfileData>((ref) {
-  final user = ref.watch(currentUserProvider);
-  return UserProfileNotifier(user: user);
-});
+    AsyncNotifierProvider<UserProfileNotifier, ProfileDto>(
+      UserProfileNotifier.new,
+    );
+
+class UserProfileNotifier extends AsyncNotifier<ProfileDto> {
+  @override
+  Future<ProfileDto> build() {
+    // `ref.watch` لا `ref.read` هنا عمدًا — يجعل هذا الـ Notifier auth-aware:
+    // أي تغيّر في هوية المستخدم الحالي (logout ثم login بحساب آخر) يعيد
+    // بناء `build()` من الصفر بدل الاحتفاظ بملف الحساب السابق معلَّقًا في
+    // الذاكرة (AUTH_SESSION_AUDIT.md، مشكلة #5 CRITICAL). القيمة نفسها غير
+    // مستخدَمة — الغرض فقط ربط دورة حياة هذا الـ Provider بحالة المصادقة.
+    ref.watch(currentUserProvider);
+    return _repo.fetch();
+  }
+
+  ProfileRepository get _repo => ref.read(profileRepositoryProvider);
+
+  /// يعيد الجلب من الخادم — يُستخدَم لأخذ `rowVersion` طازج قبل [update]
+  /// إن كانت الشاشة مفتوحة منذ فترة.
+  Future<void> refresh() async {
+    state = const AsyncLoading<ProfileDto>().copyWithPrevious(state);
+    state = await AsyncValue.guard(_repo.fetch);
+  }
+
+  /// يرمي [ApiException] عند الرفض — الشاشة تعرض رسالة الخادم بدل ابتلاعها.
+  Future<void> updateField({
+    String? fullName,
+    String? phone,
+    String? gender,
+    String? region,
+  }) async {
+    final current = state.valueOrNull;
+    if (current == null) return;
+
+    final previous = state;
+    // نجلب نسخة طازجة أولًا: `rowVersion` المعروض قد يكون قديمًا لو مضى
+    // وقت منذ فتح الشاشة (تعديل من جهاز آخر، أو من نفس الحساب سابقًا).
+    final fresh = await _repo.fetch();
+
+    state = const AsyncLoading<ProfileDto>().copyWithPrevious(previous);
+    try {
+      final updated = await _repo.update(
+        fullName: fullName ?? fresh.fullName,
+        phone: phone ?? fresh.phone,
+        gender: gender ?? fresh.gender,
+        region: region ?? fresh.region,
+        rowVersion: fresh.rowVersion,
+      );
+      state = AsyncData(updated);
+    } on ApiException {
+      state = AsyncData(fresh);
+      rethrow;
+    }
+  }
+
+  /// يلتقط صورة (معرض/كاميرا)، يرفعها، ويحدّث الحالة بالبروفايل الناتج —
+  /// **`rowVersion` الجديد يحل محل القديم تلقائيًا** (هو ناتج نفس استدعاء
+  /// الرفع)، فلا حاجة لجلب إضافي بعده مباشرة.
+  Future<void> pickAndUploadAvatar(ImageSource source) async {
+    final previous = state;
+    final XFile? picked = await ImagePicker().pickImage(
+      source: source,
+      maxWidth: 1024,
+      maxHeight: 1024,
+      imageQuality: 85,
+    );
+    if (picked == null) return;
+
+    state = const AsyncLoading<ProfileDto>().copyWithPrevious(previous);
+    state = await AsyncValue.guard(() => _repo.uploadAvatar(File(picked.path)));
+  }
+
+  Future<void> deleteAvatar() async {
+    final previous = state;
+    state = const AsyncLoading<ProfileDto>().copyWithPrevious(previous);
+    state = await AsyncValue.guard(_repo.deleteAvatar);
+  }
+}

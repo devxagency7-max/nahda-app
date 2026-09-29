@@ -38,4 +38,22 @@ class InitialNeedMapper {
     ],
     'caseRowVersion': caseRowVersion,
   };
+
+  /// يبني [InitialNeedFormData] من استجابة `PUT`/`GET /initial-needs` الفعلية
+  /// من الخادم — الشاشة تعرض احتياجًا واحدًا بس، فنأخذ أول عنصر من `needs[]`
+  /// إن وُجد.
+  static InitialNeedFormData fromApiResponse(Map<String, dynamic> json) {
+    final needs = json['needs'] as List? ?? const [];
+    final first = needs.whereType<Map<String, dynamic>>().firstOrNull;
+    if (first == null) return InitialNeedFormData();
+
+    return InitialNeedFormData(
+      needType: first['needType'] as String? ?? '',
+      needCategory: first['needCategory'] as String?,
+      description: first['description'] as String?,
+      priorityLevel: first['priorityLevel'] as String? ?? '',
+      details: first['details'] as String?,
+      notes: first['notes'] as String?,
+    );
+  }
 }

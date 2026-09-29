@@ -14,6 +14,7 @@ enum SyncOperationType {
   updateClassification('update_classification'),
   updateAssessedNeeds('update_assessed_needs'),
   updateSupportRecommendations('update_support_recommendations'),
+  updateCharity('update_charity'),
 
   // سير العمل — تتطلب Idempotency-Key
   acceptCase('accept_case'),
@@ -75,6 +76,7 @@ enum SyncOperationType {
     SyncOperationType.updateClassification ||
     SyncOperationType.updateAssessedNeeds ||
     SyncOperationType.updateSupportRecommendations ||
+    SyncOperationType.updateCharity ||
     SyncOperationType.updateFieldVerification => true,
     _ => false,
   };

@@ -31,10 +31,13 @@ class SyncStatusScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final pending = ref.watch(pendingSyncCountProvider).valueOrNull ?? 0;
     final photos = ref.watch(pendingAttachmentCountProvider).valueOrNull ?? 0;
-    final connection = ref.watch(connectionKindProvider).valueOrNull;
+    final networkStatus = ref.watch(networkStatusProvider).valueOrNull;
     final attention = ref.watch(_needsAttentionProvider).valueOrNull ?? const [];
 
-    final isOnline = connection?.isOnline ?? false;
+    // نفس منطق `syncBannerProvider`: أثناء تحميل أول قراءة اتصال لا قيمة
+    // بعد — الافتراض هنا متصل لا أوفلاين، وإلا ظهرت الشاشة بحالة "بدون
+    // اتصال" مضلِّلة لحظة فتحها رغم وجود إنترنت فعلي.
+    final isOnline = networkStatus?.isOnline ?? true;
 
     return AppBackground(
       child: Scaffold(

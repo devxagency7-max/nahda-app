@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/network/api_exception.dart';
 import '../../../core/providers/data_providers.dart';
 import '../../../core/storage/app_database.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -53,13 +54,28 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     ref.read(notificationsRepositoryProvider).refresh();
   }
 
-  Future<void> _markAllAsRead() =>
-      ref.read(notificationsRepositoryProvider).markAllRead();
+  Future<void> _markAllAsRead() async {
+    try {
+      await ref.read(notificationsRepositoryProvider).markAllRead();
+    } on ApiException catch (e) {
+      _showError(e.displayMessage);
+    }
+  }
 
   Future<void> _handleTap(CachedNotificationRow item) async {
-    if (!item.isRead) {
+    if (item.isRead) return;
+    try {
       await ref.read(notificationsRepositoryProvider).markRead(item.id);
+    } on ApiException catch (e) {
+      _showError(e.displayMessage);
     }
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: AppColors.danger),
+    );
   }
 
   @override
@@ -131,7 +147,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                 padding: const EdgeInsets.all(AppSpacing.lg),
                 physics: const AlwaysScrollableScrollPhysics(),
                 itemCount: items.length,
-                separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.sm),
+                separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
                 itemBuilder: (context, index) {
                   final item = items[index];
                   final isUnread = !item.isRead;
